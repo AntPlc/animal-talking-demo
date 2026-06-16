@@ -2,6 +2,8 @@
 
 import { NPC_PROFILES, type NpcProfile } from "./npc-data";
 
+export type { NpcProfile } from "./npc-data";
+
 export type DemoView = "simulation" | "history" | "database";
 
 export type Weather = "SUNNY" | "CLOUDY" | "RAINY" | "STORMY";
