@@ -192,11 +192,11 @@ const INITIAL_POSITIONS: Record<string, Position> = {
   npc_tom: { x: 9, y: 1 },
   npc_ben: { x: 2, y: 5 },
   npc_celia: { x: 1, y: 1 },
-  npc_dorian: { x: 6, y: 1 },
-  npc_elia: { x: 5, y: 0 },
-  npc_hugo: { x: 8, y: 6 },
-  npc_iris: { x: 10, y: 0 },
-  npc_jules: { x: 3, y: 4 },
+  npc_henti: { x: 6, y: 1 },
+  npc_rosie: { x: 5, y: 0 },
+  npc_jeff: { x: 8, y: 6 },
+  npc_antoine: { x: 10, y: 0 },
+  npc_quentin: { x: 3, y: 4 },
 };
 
 const OBJECTIVE_BY_ROLE: Record<string, NpcObjective> = {
@@ -488,7 +488,7 @@ export function findInteractionCandidate(state: DemoState): InteractionCandidate
 
 export function createScriptedInteraction(state: DemoState, reason: InteractionReason): InteractionCandidate | null {
   const first = state.npcs.find((npc) => npc.profile.id === "npc_tom");
-  const second = state.npcs.find((npc) => npc.profile.id === "npc_iris");
+  const second = state.npcs.find((npc) => npc.profile.id === "npc_quentin");
 
   if (!first || !second) {
     return null;
