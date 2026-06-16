@@ -131,20 +131,11 @@ export interface ConversationRecord {
   endedAt?: string;
 }
 
-export interface PlayerState {
-  id: "player";
-  name: string;
-  monogram: string;
-  position: Position;
-  lastInteractionTick: number;
-}
-
 export interface DemoState {
   tick: number;
   worldTime: WorldTime;
   weather: Weather;
   zones: WorldZone[];
-  player: PlayerState;
   npcs: NpcState[];
   conversations: ConversationRecord[];
   recentOverrides: OverrideEvent[];
@@ -158,15 +149,9 @@ export interface InteractionCandidate {
   zoneId: string | null;
 }
 
-export interface PlayerInteractionCandidate {
-  npcId: string;
-  reason: InteractionReason;
-  zoneId: string | null;
-}
 
 const GRID_WIDTH = 12;
 const GRID_HEIGHT = 8;
-const PLAYER_ID = "player";
 
 const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "SUNNY", "STORMY"];
 const WEATHER_CHANGE_INTERVAL_TICKS = 6;
@@ -267,13 +252,6 @@ export function createInitialDemoState(): DemoState {
     worldTime: { day: 1, hour: 9, minute: 0, second: 0 },
     weather: "SUNNY",
     zones: BASE_ZONES,
-    player: {
-      id: "player",
-      name: "You",
-      monogram: "YOU",
-      position: { x: 1, y: 6 },
-      lastInteractionTick: -100,
-    },
     npcs,
     conversations: [],
     recentOverrides: [],
@@ -303,31 +281,56 @@ export function advanceDemoState(state: DemoState): DemoState {
   const weatherIndex = Math.floor(nextTick / WEATHER_CHANGE_INTERVAL_TICKS) % WEATHER_SEQUENCE.length;
   const nextWeather = WEATHER_SEQUENCE[weatherIndex];
 
-  const nextNpcs = state.npcs.map((npc, index) => {
+  const occupied = new Set<string>();
+
+  for (const npc of state.npcs) {
+    occupied.add(positionKey(npc.runtime.position));
+  }
+
+  const nextNpcs: NpcState[] = [];
+
+  for (let index = 0; index < state.npcs.length; index += 1) {
+    const npc = state.npcs[index];
+
     if (npc.runtime.status === "in_conversation") {
-      return npc;
+      nextNpcs.push(npc);
+      continue;
     }
+
+    const currentKey = positionKey(npc.runtime.position);
+    occupied.delete(currentKey);
 
     const currentZone = getZoneForPosition(npc.runtime.position, state.zones);
     const destination =
       npc.runtime.destination ?? chooseDestination(npc, index, nextTick, state.zones, currentZone);
 
     if (!destination) {
-      return {
+      occupied.add(currentKey);
+      nextNpcs.push({
         ...npc,
         runtime: {
           ...npc.runtime,
           status: "idle" as const,
         },
-      };
+      });
+      continue;
     }
 
     const nextPosition = stepToward(npc.runtime.position, destination);
     const arrived = positionsEqual(nextPosition, destination);
+    const nextKey = positionKey(nextPosition);
+
+    if (occupied.has(nextKey)) {
+      occupied.add(currentKey);
+      nextNpcs.push(npc);
+      continue;
+    }
+
+    occupied.add(nextKey);
     const targetZoneId = arrived ? null : getZoneForPosition(destination, state.zones)?.id ?? null;
     const nextStatus: NpcRuntimeState["status"] = arrived ? "idle" : "moving";
 
-    return {
+    nextNpcs.push({
       ...npc,
       runtime: {
         ...npc.runtime,
@@ -336,8 +339,8 @@ export function advanceDemoState(state: DemoState): DemoState {
         targetZoneId,
         status: nextStatus,
       },
-    };
-  });
+    });
+  }
 
   const logs = [
     ...state.logs,
@@ -353,141 +356,6 @@ export function advanceDemoState(state: DemoState): DemoState {
     weather: nextWeather,
     npcs: nextNpcs,
     logs,
-  };
-}
-
-export function movePlayer(state: DemoState, direction: "up" | "down" | "left" | "right"): DemoState {
-  if (state.activeConversationId) {
-    return state;
-  }
-
-  const delta = playerDelta(direction);
-  const nextPosition = clampPosition({
-    x: state.player.position.x + delta.x,
-    y: state.player.position.y + delta.y,
-  });
-
-  if (positionsEqual(nextPosition, state.player.position)) {
-    return state;
-  }
-
-  return {
-    ...state,
-    player: {
-      ...state.player,
-      position: nextPosition,
-    },
-    logs: [`Player moved ${direction} to ${nextPosition.x},${nextPosition.y}.`, ...state.logs].slice(0, 20),
-  };
-}
-
-export function findPlayerInteractionCandidate(state: DemoState): PlayerInteractionCandidate | null {
-  if (state.activeConversationId) {
-    return null;
-  }
-
-  const nearbyNpc = state.npcs.find((npc) => {
-    if (npc.runtime.status === "in_conversation") {
-      return false;
-    }
-
-    return distance(state.player.position, npc.runtime.position) <= 1;
-  });
-
-  if (!nearbyNpc) {
-    return null;
-  }
-
-  if (state.tick - Math.max(state.player.lastInteractionTick, nearbyNpc.runtime.lastInteractionTick) < 4) {
-    return null;
-  }
-
-  return {
-    npcId: nearbyNpc.profile.id,
-    reason: "PROXIMITY",
-    zoneId: getZoneForPosition(state.player.position, state.zones)?.id ?? null,
-  };
-}
-
-export function startPlayerInteraction(state: DemoState, candidate: PlayerInteractionCandidate): DemoState {
-  const npc = getNpcById(state, candidate.npcId);
-
-  if (!npc || state.activeConversationId) {
-    return state;
-  }
-
-  const conversationId = `conv_${state.tick}_${PLAYER_ID}_${npc.profile.id}`;
-  const startedAt = toIsoTimestamp(state.worldTime);
-  const pendingRecord: ConversationRecord = {
-    id: conversationId,
-    participantIds: [PLAYER_ID, npc.profile.id],
-    participantNames: ["You", npc.profile.name],
-    reason: candidate.reason,
-    zoneId: candidate.zoneId,
-    status: "generating",
-    generatedTurnCount: 0,
-    turns: [],
-    updates: [],
-    summary: `You started a conversation with ${npc.profile.name}.`,
-    startedAt,
-  };
-
-  return {
-    ...state,
-    activeConversationId: conversationId,
-    conversations: [pendingRecord, ...state.conversations].slice(0, 20),
-    npcs: state.npcs.map((nextNpc) => {
-      if (nextNpc.profile.id !== candidate.npcId) {
-        return nextNpc;
-      }
-
-      return {
-        ...nextNpc,
-        runtime: {
-          ...nextNpc.runtime,
-          status: "in_conversation",
-        },
-      };
-    }),
-    logs: [`Conversation ${conversationId} started with ${npc.profile.name}.`, ...state.logs].slice(0, 20),
-  };
-}
-
-export function finishPlayerInteraction(state: DemoState, candidate: PlayerInteractionCandidate): DemoState {
-  const npc = getNpcById(state, candidate.npcId);
-
-  if (!npc || !state.activeConversationId) {
-    return state;
-  }
-
-  const completedAt = toIsoTimestamp(state.worldTime);
-  const dialogue = buildPlayerConversation(state, npc, candidate);
-
-  return {
-    ...state,
-    activeConversationId: null,
-    player: {
-      ...state.player,
-      lastInteractionTick: state.tick,
-    },
-    conversations: state.conversations.map((conversation) => {
-      if (conversation.id !== state.activeConversationId) {
-        return conversation;
-      }
-
-      return {
-        ...conversation,
-        status: "completed",
-        generatedTurnCount: dialogue.turns.length,
-        turns: dialogue.turns,
-        updates: dialogue.updates,
-        summary: dialogue.summary,
-        endedAt: completedAt,
-      };
-    }),
-    npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
-    recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
-    logs: [`Conversation ${state.activeConversationId} completed.`, ...state.logs].slice(0, 20),
   };
 }
 
@@ -866,95 +734,6 @@ export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   };
 }
 
-function buildPlayerConversation(
-  state: DemoState,
-  npc: NpcState,
-  candidate: PlayerInteractionCandidate,
-): {
-  turns: DialogueTurn[];
-  updates: CharacterUpdate[];
-  summary: string;
-} {
-  const location = candidate.zoneId ? getZoneById(state.zones, candidate.zoneId)?.name ?? "the town" : "the town";
-  const mood = moodFromContext(npc.profile.role, state.weather, state.worldTime.hour);
-  const nextObjective = objectiveForConversation(npc, state, candidate.zoneId);
-  const now = toIsoTimestamp(state.worldTime);
-  const seed = `${npc.profile.id}:${location}:${state.weather}:${state.worldTime.hour}`;
-  const opening = pickTemplate(seed, [
-    `Hi ${npc.profile.name}, got a minute near ${location}?`,
-    `Hey ${npc.profile.name}, I caught you at a good time, right?`,
-    `${npc.profile.name}, I was hoping to find you around ${location}.`,
-    `Quick question, ${npc.profile.name}: how are things looking over here?`,
-  ]);
-  const response = pickTemplate(seed, [
-    `Sure. I am feeling ${mood.toLowerCase()}, and I should ${nextObjective.label.toLowerCase()} soon.`,
-    `Absolutely. This is one of those moments where I can slow down and focus on ${nextObjective.label.toLowerCase()}.`,
-    `I can spare a minute. The day has me feeling ${mood.toLowerCase()}, which is not a bad fit for this conversation.`,
-    `Of course. I was already thinking about ${nextObjective.label.toLowerCase()}, so this lines up nicely.`,
-  ]);
-  const closing = pickTemplate(seed, [
-    "Thanks, I will keep that in mind.",
-    "Good to know. I will circle back if anything changes.",
-    "That helps a lot. I will leave you to it.",
-    "Perfect, that gives me a better read on the day.",
-  ]);
-
-  const turns: DialogueTurn[] = [
-    {
-      index: 0,
-      speakerId: PLAYER_ID,
-      speakerName: "You",
-      message: opening,
-      createdAt: now,
-    },
-    {
-      index: 1,
-      speakerId: npc.profile.id,
-      speakerName: npc.profile.name,
-      message: response,
-      mood,
-      createdAt: now,
-    },
-    {
-      index: 2,
-      speakerId: PLAYER_ID,
-      speakerName: "You",
-      message: closing,
-      createdAt: now,
-    },
-  ];
-
-  const updates: CharacterUpdate[] = [
-    {
-      type: "UPDATE_MOOD",
-      characterId: npc.profile.id,
-      mood,
-      note: `${npc.profile.name} adjusted mood after talking with the player.`,
-      source: "LLM_PACKAGE",
-    },
-    {
-      type: "UPDATE_OBJECTIVE",
-      characterId: npc.profile.id,
-      objective: nextObjective,
-      note: `${npc.profile.name} refreshed their short-term objective.`,
-      source: "CLASSIC_ENGINE",
-    },
-    {
-      type: "ADD_MEMORY",
-      characterId: npc.profile.id,
-      memory: `${npc.profile.name} spoke with the player near ${location}.`,
-      note: "Player conversation stored as runtime memory.",
-      source: "LLM_PACKAGE",
-    },
-  ];
-
-  return {
-    turns,
-    updates,
-    summary: `You talked with ${npc.profile.name} at ${location}.`,
-  };
-}
-
 function chooseDestination(
   npc: NpcState,
   index: number,
@@ -973,34 +752,16 @@ function chooseDestination(
   return zoneCenter(targetZone);
 }
 
-function playerDelta(direction: "up" | "down" | "left" | "right"): Position {
-  switch (direction) {
-    case "up":
-      return { x: 0, y: -1 };
-    case "down":
-      return { x: 0, y: 1 };
-    case "left":
-      return { x: -1, y: 0 };
-    case "right":
-      return { x: 1, y: 0 };
-  }
-}
-
-function clampPosition(position: Position): Position {
-  return {
-    x: Math.max(0, Math.min(GRID_WIDTH - 1, position.x)),
-    y: Math.max(0, Math.min(GRID_HEIGHT - 1, position.y)),
-  };
-}
-
 function stepToward(current: Position, destination: Position): Position {
-  const nextX = moveAxis(current.x, destination.x);
-  const nextY = moveAxis(current.y, destination.y);
+  if (current.x !== destination.x) {
+    return { x: moveAxis(current.x, destination.x), y: current.y };
+  }
 
-  return {
-    x: nextX,
-    y: nextY,
-  };
+  if (current.y !== destination.y) {
+    return { x: current.x, y: moveAxis(current.y, destination.y) };
+  }
+
+  return current;
 }
 
 function moveAxis(current: number, destination: number): number {
@@ -1017,6 +778,10 @@ function moveAxis(current: number, destination: number): number {
 
 function positionsEqual(first: Position, second: Position): boolean {
   return first.x === second.x && first.y === second.y;
+}
+
+function positionKey(position: Position): string {
+  return `${position.x},${position.y}`;
 }
 
 function distance(first: Position, second: Position): number {

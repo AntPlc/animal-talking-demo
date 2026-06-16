@@ -8,22 +8,16 @@ import styles from "./DemoApp.module.css";
 import {
   advanceDemoState,
   createInitialDemoState,
-  createScriptedInteraction,
-  findPlayerInteractionCandidate,
   findInteractionCandidate,
   finishInteraction,
-  finishPlayerInteraction,
   formatObjective,
   formatRelationship,
   formatWeather,
   formatWorldTime,
   getGridHeight,
   getGridWidth,
-  getNpcById,
   getZoneForPosition,
   hydrateNpcProfile,
-  movePlayer,
-  startPlayerInteraction,
   startInteraction,
   type ConversationRecord,
   type DemoState,
@@ -32,13 +26,12 @@ import {
   type NpcProfile,
   type NpcState,
   type OverrideEvent,
-  type PlayerInteractionCandidate,
 } from "@/lib/demo-state";
 
 const STORAGE_KEY = "animal-talking-demo-state-v2";
 const STORAGE_VERSION = 2;
 const TICK_INTERVAL_MS = 1800;
-const GENERATION_DELAY_MS = 1100;
+const GENERATION_DELAY_MS = Number(process.env.NEXT_PUBLIC_GENERATION_DELAY_MS) || 20_000;
 
 type ViewLabel = {
   title: string;
@@ -60,14 +53,28 @@ const VIEW_LABELS: Record<DemoView, ViewLabel> = {
 };
 
 export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
-  const [state, setState] = useState<DemoState>(() => initializeDemoState());
+  const [state, setState] = useState<DemoState>(() => createInitialDemoState());
   const [pendingCandidate, setPendingCandidate] = useState<InteractionCandidate | null>(null);
-  const [pendingPlayerCandidate, setPendingPlayerCandidate] = useState<PlayerInteractionCandidate | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<number | null>(null);
   const simulationStartRef = useRef(Date.now());
+  const hasHydratedStorageRef = useRef(false);
 
   useEffect(() => {
+    const saved = readSavedState();
+
+    if (saved) {
+      setState(normalizeSavedState(saved));
+    }
+
+    hasHydratedStorageRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedStorageRef.current) {
+      return;
+    }
+
     writeSavedState(state);
   }, [state]);
 
@@ -96,45 +103,6 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   }, []);
 
   useEffect(() => {
-    if (view !== "simulation") {
-      return;
-    }
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (state.activeConversationId || pendingCandidate || pendingPlayerCandidate) {
-        return;
-      }
-
-      const direction = keyToDirection(event.key);
-
-      if (!direction) {
-        if (event.key.toLowerCase() === "e") {
-          event.preventDefault();
-          const candidate = findPlayerInteractionCandidate(state);
-          if (candidate && timerRef.current === null) {
-            setPendingPlayerCandidate(candidate);
-            setState((current) => startPlayerInteraction(current, candidate));
-            timerRef.current = window.setTimeout(() => {
-              setState((current) => finishPlayerInteraction(current, candidate));
-              setPendingPlayerCandidate(null);
-              timerRef.current = null;
-            }, GENERATION_DELAY_MS);
-          }
-        }
-        return;
-      }
-
-      event.preventDefault();
-      setState((current) => movePlayer(current, direction));
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [pendingCandidate, pendingPlayerCandidate, state, view]);
-
-  useEffect(() => {
     return () => {
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
@@ -147,7 +115,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
       return;
     }
 
-    if (state.activeConversationId || pendingCandidate || pendingPlayerCandidate) {
+    if (state.activeConversationId || pendingCandidate) {
       return;
     }
 
@@ -155,7 +123,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     if (candidate) {
       beginConversation(candidate);
     }
-  }, [pendingCandidate, pendingPlayerCandidate, state, view]);
+  }, [pendingCandidate, state, view]);
 
   const activeConversation = useMemo(() => {
     if (!state.activeConversationId) {
@@ -166,8 +134,6 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   }, [state.activeConversationId, state.conversations]);
 
   const recentConversations = useMemo(() => state.conversations.slice(0, 6), [state.conversations]);
-  const nearbyCandidate = useMemo(() => findPlayerInteractionCandidate(state), [state]);
-  const nearbyNpc = nearbyCandidate ? getNpcById(state, nearbyCandidate.npcId) ?? null : null;
 
   function beginConversation(candidate: InteractionCandidate) {
     if (timerRef.current !== null) {
@@ -184,83 +150,12 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     }, GENERATION_DELAY_MS);
   }
 
-  function beginPlayerConversation(candidate: PlayerInteractionCandidate) {
-    if (timerRef.current !== null) {
-      return;
-    }
-
-    setPendingPlayerCandidate(candidate);
-    setState((current) => startPlayerInteraction(current, candidate));
-
-    timerRef.current = window.setTimeout(() => {
-      setState((current) => finishPlayerInteraction(current, candidate));
-      setPendingPlayerCandidate(null);
-      timerRef.current = null;
-    }, GENERATION_DELAY_MS);
-  }
-
-  function stepOnce() {
-    setState((current) => {
-      const next = advanceDemoState(current);
-
-      if (!next.activeConversationId && !pendingCandidate) {
-        const candidate = findInteractionCandidate(next);
-
-        if (candidate) {
-          beginConversation(candidate);
-        }
-      }
-
-      return next;
-    });
-  }
-
-  function resetDemo() {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-
-    setPendingCandidate(null);
-    simulationStartRef.current = Date.now();
-    setElapsedMs(0);
-    setState(createInitialDemoState());
-  }
-
-  function movePlayerWithButton(direction: "up" | "down" | "left" | "right") {
-    setState((current) => movePlayer(current, direction));
-  }
-
-  function talkToNearbyNpc() {
-    if (pendingCandidate || pendingPlayerCandidate || state.activeConversationId) {
-      return;
-    }
-
-    const candidate = findPlayerInteractionCandidate(state);
-
-    if (!candidate) {
-      return;
-    }
-
-    beginPlayerConversation(candidate);
-  }
-
-  function scriptedConversation() {
-    if (state.activeConversationId || pendingCandidate) {
-      return;
-    }
-
-    const candidate = createScriptedInteraction(state, "SCRIPTED_EVENT");
-
-    if (!candidate) {
-      return;
-    }
-
-    beginConversation(candidate);
-  }
+  const isSimulationView = view === "simulation";
 
   return (
-    <div className={styles.shell}>
+    <div
+      className={`${styles.shell} ${isSimulationView ? styles.shellSimulation : styles.shellScrollable}`}
+    >
       <header className={styles.header}>
         <div>
           <p className={styles.kicker}>Animal Talking demo</p>
@@ -293,7 +188,9 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         />
       </section>
 
-      <div className={styles.mainContent}>
+      <div
+        className={`${styles.mainContent} ${isSimulationView ? styles.mainSimulation : styles.mainScrollable}`}
+      >
         {view === "simulation" && renderSimulationView()}
         {view === "history" && renderHistoryView()}
         {view === "database" && renderDatabaseView()}
@@ -336,11 +233,13 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
             <div className={styles.tokensLayer} aria-hidden="true">
               {state.npcs.map((npc) => {
                 const active = activeConversation?.participantIds.includes(npc.profile.id) ?? false;
+                const generating = active && activeConversation?.status === "generating";
                 return (
                   <NpcToken
                     key={npc.profile.id}
                     npc={npc}
                     active={active}
+                    generating={generating}
                     zones={state.zones}
                   />
                 );
@@ -355,9 +254,8 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
               <div>
                 <h2>Conversation pipeline</h2>
                 <p>
-                  {nearbyNpc
-                    ? `${nearbyNpc.profile.name} is in range. Press E to trigger a package-generated dialogue.`
-                    : "NPC/NPC interactions are auto-generated by the package, and player interactions can be triggered with E."}
+                  NPC interactions are triggered automatically when characters meet in the same zone
+                  or get close enough. Movement follows their objectives and the simulation tick.
                 </p>
               </div>
               <span className={styles.badge}>
@@ -421,7 +319,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
           </div>
         </div>
 
-        <div className={`${styles.panelScroll} ${styles.historyList}`}>
+        <div className={styles.historyList}>
           {recentConversations.map((conversation) => (
             <ConversationCard key={conversation.id} conversation={conversation} />
           ))}
@@ -553,10 +451,12 @@ function NpcPortrait({
 function NpcToken({
   npc,
   active,
+  generating,
   zones,
 }: Readonly<{
   npc: NpcState;
   active: boolean;
+  generating: boolean;
   zones: DemoState["zones"];
 }>) {
   const zone = getZoneForPosition(npc.runtime.position, zones);
@@ -565,12 +465,16 @@ function NpcToken({
 
   return (
     <div
-      className={`${styles.token} ${styles.tokenAnimated} ${active ? styles.tokenActive : ""} ${npc.runtime.status === "moving" ? styles.tokenMoving : ""}`}
+      className={`${styles.token} ${styles.tokenAnimated} ${active ? styles.tokenActive : ""} ${generating ? styles.tokenGenerating : ""} ${npc.runtime.status === "moving" ? styles.tokenMoving : ""}`}
       style={{ left, top }}
-      title={`${npc.profile.name} in ${zone?.name ?? "the world"}`}
+      title={
+        generating
+          ? `${npc.profile.name} is generating dialogue in ${zone?.name ?? "the world"}`
+          : `${npc.profile.name} in ${zone?.name ?? "the world"}`
+      }
     >
       <NpcPortrait profile={npc.profile} className={styles.tokenPortrait} />
-      <small>{npc.profile.name}</small>
+      <small>{generating ? "Generating…" : npc.profile.name}</small>
     </div>
   );
 }
@@ -670,16 +574,6 @@ function readSavedState(): DemoState | null {
   }
 }
 
-function initializeDemoState(): DemoState {
-  const saved = readSavedState();
-
-  if (!saved) {
-    return createInitialDemoState();
-  }
-
-  return normalizeSavedState(saved);
-}
-
 function writeSavedState(state: DemoState) {
   if (typeof window === "undefined") {
     return;
@@ -694,42 +588,34 @@ function writeSavedState(state: DemoState) {
   );
 }
 
-function normalizeSavedState(state: DemoState): DemoState {
-  const normalizedPlayer = state.player ?? {
-    id: "player",
-    name: "You",
-    monogram: "YOU",
-    position: { x: 1, y: 6 },
-    lastInteractionTick: -100,
-  };
+function normalizeSavedState(state: DemoState & { player?: unknown }): DemoState {
+  const { player: _player, ...rest } = state;
 
-  if (!state.activeConversationId) {
+  if (!rest.activeConversationId) {
     return {
-      ...state,
+      ...rest,
       worldTime: {
-        ...state.worldTime,
-        second: state.worldTime.second ?? 0,
+        ...rest.worldTime,
+        second: rest.worldTime.second ?? 0,
       },
-      recentOverrides: state.recentOverrides ?? [],
-      player: normalizedPlayer,
-      npcs: state.npcs.map(hydrateNpcProfile),
+      recentOverrides: rest.recentOverrides ?? [],
+      npcs: rest.npcs.map(hydrateNpcProfile),
     };
   }
 
   const completedAt = new Date().toISOString();
 
   return {
-    ...state,
+    ...rest,
     worldTime: {
-      ...state.worldTime,
-      second: state.worldTime.second ?? 0,
+      ...rest.worldTime,
+      second: rest.worldTime.second ?? 0,
     },
-    recentOverrides: state.recentOverrides ?? [],
-    player: normalizedPlayer,
-    npcs: state.npcs.map(hydrateNpcProfile),
+    recentOverrides: rest.recentOverrides ?? [],
+    npcs: rest.npcs.map(hydrateNpcProfile),
     activeConversationId: null,
-    conversations: state.conversations.map((conversation) => {
-      if (conversation.id !== state.activeConversationId) {
+    conversations: rest.conversations.map((conversation) => {
+      if (conversation.id !== rest.activeConversationId) {
         return conversation;
       }
 
@@ -739,7 +625,7 @@ function normalizeSavedState(state: DemoState): DemoState {
         endedAt: completedAt,
       };
     }),
-    logs: [`Recovered from interrupted conversation ${state.activeConversationId}.`, ...state.logs].slice(0, 20),
+    logs: [`Recovered from interrupted conversation ${rest.activeConversationId}.`, ...rest.logs].slice(0, 20),
   };
 }
 
@@ -755,25 +641,6 @@ function isSavedDemoState(
     typeof value.state === "object" &&
     value.state !== null
   );
-}
-
-function keyToDirection(key: string): "up" | "down" | "left" | "right" | null {
-  switch (key.toLowerCase()) {
-    case "arrowup":
-    case "w":
-      return "up";
-    case "arrowdown":
-    case "s":
-      return "down";
-    case "arrowleft":
-    case "a":
-      return "left";
-    case "arrowright":
-    case "d":
-      return "right";
-    default:
-      return null;
-  }
 }
 
 function formatElapsed(valueMs: number): string {
