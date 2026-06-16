@@ -42,13 +42,12 @@ const GENERATION_DELAY_MS = 1100;
 
 type ViewLabel = {
   title: string;
-  description: string;
+  description?: string;
 };
 
 const VIEW_LABELS: Record<DemoView, ViewLabel> = {
   simulation: {
     title: "Simulation view",
-    description: "Grid, NPC movement, world clock, weather, and live interactions.",
   },
   history: {
     title: "Conversation history",
@@ -266,7 +265,9 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         <div>
           <p className={styles.kicker}>Animal Talking demo</p>
           <h1>{VIEW_LABELS[view].title}</h1>
-          <p className={styles.subtitle}>{VIEW_LABELS[view].description}</p>
+          {VIEW_LABELS[view].description ? (
+            <p className={styles.subtitle}>{VIEW_LABELS[view].description}</p>
+          ) : null}
         </div>
 
         <nav className={styles.nav} aria-label="Demo routes">
@@ -292,9 +293,11 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         />
       </section>
 
-      {view === "simulation" && renderSimulationView()}
-      {view === "history" && renderHistoryView()}
-      {view === "database" && renderDatabaseView()}
+      <div className={styles.mainContent}>
+        {view === "simulation" && renderSimulationView()}
+        {view === "history" && renderHistoryView()}
+        {view === "database" && renderDatabaseView()}
+      </div>
     </div>
   );
 
@@ -302,45 +305,6 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     return (
       <div className={styles.layout}>
         <section className={styles.boardPanel} aria-label="Game world">
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>2D grid</h2>
-              <p>Move with arrows/WASD then press E (or Talk) near an NPC to create an exchange.</p>
-            </div>
-
-            <div className={styles.controls}>
-              <button className={styles.button} type="button" onClick={() => movePlayerWithButton("up")}>
-                Up
-              </button>
-              <button className={styles.button} type="button" onClick={() => movePlayerWithButton("left")}>
-                Left
-              </button>
-              <button className={styles.button} type="button" onClick={() => movePlayerWithButton("down")}>
-                Down
-              </button>
-              <button className={styles.button} type="button" onClick={() => movePlayerWithButton("right")}>
-                Right
-              </button>
-              <button
-                className={styles.button}
-                type="button"
-                onClick={talkToNearbyNpc}
-                disabled={!nearbyNpc || !!state.activeConversationId}
-              >
-                {nearbyNpc ? `Talk to ${nearbyNpc.profile.name}` : "Talk"}
-              </button>
-              <button className={styles.button} type="button" onClick={stepOnce}>
-                Step once
-              </button>
-              <button className={styles.button} type="button" onClick={scriptedConversation}>
-                Scripted interaction
-              </button>
-              <button className={styles.buttonSecondary} type="button" onClick={resetDemo}>
-                Reset
-              </button>
-            </div>
-          </div>
-
           <div className={styles.gridShell}>
             <div
               className={styles.grid}
@@ -386,7 +350,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         </section>
 
         <aside className={styles.sideRail}>
-          <section className={styles.panel} aria-label="Conversation status">
+          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Conversation status">
             <div className={styles.panelHeader}>
               <div>
                 <h2>Conversation pipeline</h2>
@@ -401,17 +365,19 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
               </span>
             </div>
 
-            {activeConversation ? (
-              <ConversationCard conversation={activeConversation} />
-            ) : (
-              <p className={styles.placeholder}>
-                No conversation is running right now. NPCs will trigger one automatically when they
-                meet.
-              </p>
-            )}
+            <div className={styles.panelScroll}>
+              {activeConversation ? (
+                <ConversationCard conversation={activeConversation} />
+              ) : (
+                <p className={styles.placeholder}>
+                  No conversation is running right now. NPCs will trigger one automatically when they
+                  meet.
+                </p>
+              )}
+            </div>
           </section>
 
-          <section className={styles.panel} aria-label="Recent interactions">
+          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Recent interactions">
             <div className={styles.panelHeader}>
               <div>
                 <h2>Recent interactions</h2>
@@ -419,14 +385,14 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
               </div>
             </div>
 
-            <div className={styles.cardList}>
+            <div className={`${styles.panelScroll} ${styles.cardList}`}>
               {recentConversations.map((conversation) => (
                 <ConversationPreview key={conversation.id} conversation={conversation} />
               ))}
             </div>
           </section>
 
-          <section className={styles.panel} aria-label="Debug log">
+          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Debug log">
             <div className={styles.panelHeader}>
               <div>
                 <h2>Debug trail</h2>
@@ -434,7 +400,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
               </div>
             </div>
 
-            <ul className={styles.logList}>
+            <ul className={`${styles.panelScroll} ${styles.logList}`}>
               {state.logs.slice(0, 6).map((log) => (
                 <li key={log}>{log}</li>
               ))}
@@ -455,7 +421,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
           </div>
         </div>
 
-        <div className={styles.historyList}>
+        <div className={`${styles.panelScroll} ${styles.historyList}`}>
           {recentConversations.map((conversation) => (
             <ConversationCard key={conversation.id} conversation={conversation} />
           ))}
@@ -474,74 +440,76 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
           </div>
         </div>
 
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Role</th>
-                <th>Mood</th>
-                <th>Objective</th>
-                <th>Position</th>
-                <th>Memory trail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.npcs.map((npc) => (
-                <tr key={npc.profile.id}>
-                  <td>
-                    <strong>{npc.profile.name}</strong>
-                    <div className={styles.tableMeta}>{npc.profile.id}</div>
-                  </td>
-                  <td>{npc.profile.role}</td>
-                  <td>{npc.runtime.mood}</td>
-                  <td>{formatObjective(npc.runtime.objective)}</td>
-                  <td>
-                    {npc.runtime.position.x}, {npc.runtime.position.y}
-                  </td>
-                  <td>{npc.memories.slice(0, 2).join(" | ")}</td>
+        <div className={styles.contentBody}>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Mood</th>
+                  <th>Objective</th>
+                  <th>Position</th>
+                  <th>Memory trail</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <section className={styles.overridePanel} aria-label="Override actions">
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>Override actions</h2>
-              <p>Blue = Classic engine overrides, violet = package/LLM overrides.</p>
-            </div>
+              </thead>
+              <tbody>
+                {state.npcs.map((npc) => (
+                  <tr key={npc.profile.id}>
+                    <td>
+                      <strong>{npc.profile.name}</strong>
+                      <div className={styles.tableMeta}>{npc.profile.id}</div>
+                    </td>
+                    <td>{npc.profile.role}</td>
+                    <td>{npc.runtime.mood}</td>
+                    <td>{formatObjective(npc.runtime.objective)}</td>
+                    <td>
+                      {npc.runtime.position.x}, {npc.runtime.position.y}
+                    </td>
+                    <td>{npc.memories.slice(0, 2).join(" | ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className={styles.overrideList}>
-            {state.recentOverrides.slice(0, 12).map((event) => (
-              <OverrideEventRow key={event.id} event={event} />
+
+          <section className={styles.overridePanel} aria-label="Override actions">
+            <div className={styles.panelHeader}>
+              <div>
+                <h2>Override actions</h2>
+                <p>Blue = Classic engine overrides, violet = package/LLM overrides.</p>
+              </div>
+            </div>
+            <div className={styles.overrideList}>
+              {state.recentOverrides.slice(0, 12).map((event) => (
+                <OverrideEventRow key={event.id} event={event} />
+              ))}
+            </div>
+          </section>
+
+          <div className={styles.databaseGrid}>
+            {state.npcs.map((npc) => (
+              <article key={npc.profile.id} className={styles.smallCard}>
+                <div className={styles.smallCardHeader}>
+                  <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
+                  <div className={styles.smallCardHeaderText}>
+                    <strong>{npc.profile.name}</strong>
+                    <span>{npc.profile.role}</span>
+                  </div>
+                </div>
+                <p className={styles.loreText}>{npc.profile.lore}</p>
+                <p>{npc.profile.personality.join(", ")}</p>
+                <p>{npc.profile.goals.join(", ")}</p>
+                <p>
+                  Relationship sample:{" "}
+                  {Object.values(npc.relationships)
+                    .slice(0, 2)
+                    .map((relation) => formatRelationship(relation))
+                    .join(", ")}
+                </p>
+              </article>
             ))}
           </div>
-        </section>
-
-        <div className={styles.databaseGrid}>
-          {state.npcs.map((npc) => (
-            <article key={npc.profile.id} className={styles.smallCard}>
-              <div className={styles.smallCardHeader}>
-                <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
-                <div className={styles.smallCardHeaderText}>
-                  <strong>{npc.profile.name}</strong>
-                  <span>{npc.profile.role}</span>
-                </div>
-              </div>
-              <p className={styles.loreText}>{npc.profile.lore}</p>
-              <p>{npc.profile.personality.join(", ")}</p>
-              <p>{npc.profile.goals.join(", ")}</p>
-              <p>
-                Relationship sample:{" "}
-                {Object.values(npc.relationships)
-                  .slice(0, 2)
-                  .map((relation) => formatRelationship(relation))
-                  .join(", ")}
-              </p>
-            </article>
-          ))}
         </div>
       </section>
     );

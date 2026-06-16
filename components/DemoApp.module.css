@@ -1,55 +1,73 @@
 .shell {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 1.25rem;
-  padding: 1.5rem;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
   height: 100dvh;
-  min-height: 100dvh;
   overflow: hidden;
+}
+
+.mainContent {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .kicker {
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  font-size: 0.68rem;
   color: #64748b;
   font-weight: 700;
 }
 
 .header h1 {
-  margin-top: 0.25rem;
-  font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 1.05;
+  margin-top: 0.15rem;
+  font-size: clamp(1.35rem, 2.5vw, 1.75rem);
+  line-height: 1.1;
 }
 
 .subtitle {
-  margin-top: 0.5rem;
+  margin-top: 0.25rem;
   max-width: 56rem;
   color: #475569;
-  line-height: 1.6;
+  font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .navLink,
 .navActive {
   border-radius: 999px;
-  padding: 0.65rem 1rem;
+  padding: 0.45rem 0.8rem;
   border: 1px solid #cbd5e1;
   background: rgba(255, 255, 255, 0.8);
+  font-size: 0.85rem;
   font-weight: 600;
+  cursor: pointer;
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+
+.navLink:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
 }
 
 .navActive {
@@ -61,7 +79,7 @@
 .topRow {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .summaryCard,
@@ -71,80 +89,103 @@
 .conversationCard,
 .smallCard {
   border: 1px solid #dbe4ef;
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
 .summaryCard {
-  padding: 1rem;
+  padding: 0.55rem 0.7rem;
   display: grid;
-  gap: 0.35rem;
+  gap: 0.2rem;
 }
 
 .summaryCard span {
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   color: #64748b;
   font-weight: 700;
 }
 
 .summaryCard strong {
-  font-size: 0.95rem;
-  line-height: 1.4;
+  font-size: 0.85rem;
+  line-height: 1.35;
 }
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.9fr) minmax(22rem, 1fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1.9fr) minmax(18rem, 1fr);
+  gap: 0.65rem;
   align-items: stretch;
+  flex: 1;
   min-height: 0;
+  height: 100%;
 }
 
 .boardPanel,
 .panel {
-  padding: 1rem;
+  padding: 0.65rem;
   min-height: 0;
   overflow: hidden;
 }
 
+.boardPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .contentPanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.contentBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.65rem;
+  align-content: start;
 }
 
 .panelHeader {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
+  flex-shrink: 0;
 }
 
 .panelHeader h2 {
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 
 .panelHeader p {
   color: #64748b;
-  margin-top: 0.3rem;
-  line-height: 1.5;
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .controls {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .button,
 .buttonSecondary {
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 0.7rem 1rem;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -167,12 +208,15 @@
 .gridShell {
   position: relative;
   overflow: hidden;
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   border: 1px solid #cbd5e1;
   background:
     linear-gradient(180deg, rgba(241, 245, 249, 0.8), rgba(226, 232, 240, 0.95)),
     #f8fafc;
-  aspect-ratio: 12 / 8;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
 .grid {
@@ -191,12 +235,12 @@
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
-  padding: 0.35rem 0.4rem;
+  padding: 0.25rem 0.35rem;
   border: 1px solid rgba(15, 23, 42, 0.16);
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   background: rgba(255, 255, 255, 0.42);
   color: #0f172a;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 700;
 }
 
@@ -209,16 +253,16 @@
 .token {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: 4.5rem;
-  min-height: 5rem;
-  border-radius: 1rem;
+  width: 4rem;
+  min-height: 4.5rem;
+  border-radius: 0.85rem;
   background: rgba(15, 23, 42, 0.92);
   color: #f8fafc;
   display: grid;
   place-items: center;
-  gap: 0.15rem;
-  padding: 0.35rem;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.25);
+  gap: 0.1rem;
+  padding: 0.25rem;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
   text-align: center;
 }
 
@@ -251,44 +295,45 @@
 }
 
 .portraitFallback {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 900;
   color: #0f172a;
   letter-spacing: 0.04em;
 }
 
 .tokenPortrait {
-  width: 3rem;
-  height: 3rem;
-  border-radius: 0.9rem;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.75rem;
 }
 
 .smallCardPortrait {
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 0.85rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
 }
 
 .smallCardHeaderText {
   display: grid;
-  gap: 0.15rem;
+  gap: 0.1rem;
   min-width: 0;
 }
 
 .smallCardHeaderText span {
   color: #64748b;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
 }
 
 .loreText {
   color: #0f172a;
-  line-height: 1.5;
+  line-height: 1.45;
+  font-size: 0.85rem;
 }
 
 .token small {
-  font-size: 0.58rem;
+  font-size: 0.55rem;
   line-height: 1;
   opacity: 0.82;
   text-align: center;
@@ -300,54 +345,72 @@
 }
 
 .sideRail {
-  display: grid;
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.railPanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.panelScroll {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .badge {
   border-radius: 999px;
-  padding: 0.35rem 0.75rem;
+  padding: 0.25rem 0.55rem;
   background: #e2e8f0;
   color: #0f172a;
   font-weight: 700;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
+  flex-shrink: 0;
 }
 
 .placeholder {
   color: #64748b;
-  line-height: 1.6;
+  font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .cardList,
 .historyList {
   display: grid;
-  gap: 0.75rem;
-  min-height: 0;
-  overflow-y: auto;
+  gap: 0.5rem;
+  align-content: start;
 }
 
 .logList {
   list-style: none;
   display: grid;
-  gap: 0.5rem;
+  gap: 0.35rem;
   color: #334155;
+  align-content: start;
 }
 
 .logList li {
-  padding: 0.7rem 0.8rem;
-  border-radius: 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.6rem;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  line-height: 1.45;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .tableWrap {
-  overflow: auto;
-  margin-bottom: 1rem;
+  overflow-x: auto;
+  overscroll-behavior: contain;
 }
 
 .table {
@@ -359,111 +422,115 @@
 .table th,
 .table td {
   text-align: left;
-  padding: 0.85rem 0.75rem;
+  padding: 0.55rem 0.6rem;
   border-bottom: 1px solid #e2e8f0;
   vertical-align: top;
+  font-size: 0.85rem;
 }
 
 .table th {
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: #64748b;
 }
 
 .tableMeta {
-  margin-top: 0.2rem;
+  margin-top: 0.15rem;
   color: #64748b;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 .databaseGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: 0.75rem;
-  min-height: 0;
-  overflow-y: auto;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.5rem;
+  align-content: start;
 }
 
 .smallCard {
-  padding: 0.9rem;
+  padding: 0.65rem;
   display: grid;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .smallCardHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.65rem;
 }
 
 .smallCard p {
   color: #334155;
-  line-height: 1.5;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .conversationCard,
 .previewCard {
-  padding: 0.9rem;
+  padding: 0.65rem;
   display: grid;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .conversationHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.65rem;
 }
 
 .conversationHeader p {
   color: #64748b;
-  margin-top: 0.25rem;
-  line-height: 1.45;
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .conversationSummary {
   color: #334155;
-  line-height: 1.55;
+  font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .turnList {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.4rem;
 }
 
 .turnItem {
   display: grid;
-  gap: 0.2rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 0.75rem;
+  gap: 0.15rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.6rem;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
 }
 
 .turnItem strong {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: #0f172a;
 }
 
 .turnItem span {
   color: #334155;
-  line-height: 1.5;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .updateList {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.35rem;
 }
 
 .updateChip {
   border-radius: 999px;
-  padding: 0.3rem 0.55rem;
+  padding: 0.2rem 0.45rem;
   background: #dbeafe;
   color: #1d4ed8;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
 }
 
@@ -478,45 +545,45 @@
 }
 
 .llmTag {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: #6d28d9;
 }
 
 .overridePanel {
   border: 1px solid #dbe4ef;
-  border-radius: 0.9rem;
-  padding: 0.8rem;
+  border-radius: 0.75rem;
+  padding: 0.65rem;
   background: #f8fafc;
 }
 
 .overrideList {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.4rem;
 }
 
 .overrideItem {
-  border-radius: 0.7rem;
+  border-radius: 0.6rem;
   border: 1px solid transparent;
-  padding: 0.55rem 0.65rem;
+  padding: 0.45rem 0.55rem;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.7rem;
+  gap: 0.55rem;
 }
 
 .overrideItem p {
-  margin-top: 0.2rem;
+  margin-top: 0.15rem;
   color: #475569;
-  font-size: 0.83rem;
-  line-height: 1.4;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .overrideItem span {
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
 }
 
 .overrideClassic {
@@ -534,32 +601,47 @@
 .previewLine {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.65rem;
   color: #475569;
+  font-size: 0.82rem;
 }
 
 .previewLine span {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.07em;
   color: #64748b;
 }
 
 .loading {
-  padding: 2rem;
+  padding: 1.5rem;
   color: #334155;
 }
 
 @media (max-width: 1080px) {
-  .topRow,
+  .topRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(12rem, 1fr) minmax(0, 1.2fr);
+  }
+
+  .gridShell {
+    min-height: 12rem;
   }
 }
 
 @media (max-width: 720px) {
   .shell {
-    padding: 1rem;
+    padding: 0.5rem 0.65rem;
+    gap: 0.5rem;
+  }
+
+  .topRow {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
   }
 
   .panelHeader,
@@ -572,13 +654,27 @@
     justify-content: flex-start;
   }
 
+  .layout {
+    grid-template-rows: minmax(10rem, 0.9fr) minmax(0, 1.1fr);
+  }
+
   .gridShell {
-    aspect-ratio: auto;
-    min-height: 22rem;
+    min-height: 10rem;
   }
 
   .table {
     min-width: 42rem;
   }
+
+  .sideRail {
+    max-height: none;
+  }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .tokenAnimated,
+  .navLink,
+  .navActive {
+    transition: none;
+  }
+}
