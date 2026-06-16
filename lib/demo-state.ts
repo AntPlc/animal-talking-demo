@@ -46,6 +46,7 @@ export interface WorldTime {
   day: number;
   hour: number;
   minute: number;
+  second: number;
 }
 
 export interface NpcRuntimeState {
@@ -81,18 +82,21 @@ export type CharacterUpdate =
       characterId: string;
       mood: NpcMood;
       note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
     }
   | {
       type: "UPDATE_OBJECTIVE";
       characterId: string;
       objective: NpcObjective;
       note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
     }
   | {
       type: "ADD_MEMORY";
       characterId: string;
       memory: string;
       note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
     }
   | {
       type: "UPDATE_RELATIONSHIP";
@@ -100,7 +104,17 @@ export type CharacterUpdate =
       targetCharacterId: string;
       relationship: RelationshipType;
       note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
     };
+
+export interface OverrideEvent {
+  id: string;
+  tick: number;
+  characterId: string;
+  type: CharacterUpdate["type"];
+  source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+  note: string;
+}
 
 export interface ConversationRecord {
   id: string;
@@ -133,6 +147,7 @@ export interface DemoState {
   player: PlayerState;
   npcs: NpcState[];
   conversations: ConversationRecord[];
+  recentOverrides: OverrideEvent[];
   activeConversationId: string | null;
   logs: string[];
 }
@@ -154,6 +169,7 @@ const GRID_HEIGHT = 8;
 const PLAYER_ID = "player";
 
 const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "SUNNY", "STORMY"];
+const WEATHER_CHANGE_INTERVAL_TICKS = 6;
 
 const BASE_ZONES: WorldZone[] = [
   {
@@ -248,7 +264,7 @@ export function createInitialDemoState(): DemoState {
 
   return {
     tick: 0,
-    worldTime: { day: 1, hour: 9, minute: 0 },
+    worldTime: { day: 1, hour: 9, minute: 0, second: 0 },
     weather: "SUNNY",
     zones: BASE_ZONES,
     player: {
@@ -260,6 +276,7 @@ export function createInitialDemoState(): DemoState {
     },
     npcs,
     conversations: [],
+    recentOverrides: [],
     activeConversationId: null,
     logs: [
       "Demo initialized with 8 hardcoded NPCs.",
@@ -283,7 +300,8 @@ function isNpcProfileId(profileId: string): profileId is keyof typeof INITIAL_PO
 export function advanceDemoState(state: DemoState): DemoState {
   const nextTick = state.tick + 1;
   const nextWorldTime = advanceWorldTime(state.worldTime, 10);
-  const nextWeather = WEATHER_SEQUENCE[nextTick % WEATHER_SEQUENCE.length];
+  const weatherIndex = Math.floor(nextTick / WEATHER_CHANGE_INTERVAL_TICKS) % WEATHER_SEQUENCE.length;
+  const nextWeather = WEATHER_SEQUENCE[weatherIndex];
 
   const nextNpcs = state.npcs.map((npc, index) => {
     if (npc.runtime.status === "in_conversation") {
@@ -325,7 +343,7 @@ export function advanceDemoState(state: DemoState): DemoState {
     ...state.logs,
     `Tick ${nextTick}: ${nextWorldTime.hour.toString().padStart(2, "0")}:${nextWorldTime.minute
       .toString()
-      .padStart(2, "0")} - weather ${nextWeather}.`,
+      .padStart(2, "0")}:${nextWorldTime.second.toString().padStart(2, "0")} - weather ${nextWeather}.`,
   ].slice(-20);
 
   return {
@@ -468,6 +486,7 @@ export function finishPlayerInteraction(state: DemoState, candidate: PlayerInter
       };
     }),
     npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
+    recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
     logs: [`Conversation ${state.activeConversationId} completed.`, ...state.logs].slice(0, 20),
   };
 }
@@ -594,6 +613,7 @@ export function finishInteraction(
       };
     }),
     npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
+    recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
     logs: [`Conversation ${state.activeConversationId} completed.`, ...state.logs].slice(0, 20),
   };
 }
@@ -647,24 +667,28 @@ export function buildConversation(
       characterId: first.profile.id,
       mood: firstMood,
       note: `${first.profile.name} felt more ${firstMood.toLowerCase()} after the exchange.`,
+      source: "LLM_PACKAGE",
     },
     {
       type: "UPDATE_MOOD",
       characterId: second.profile.id,
       mood: secondMood,
       note: `${second.profile.name} adjusted their mood after the exchange.`,
+      source: "LLM_PACKAGE",
     },
     {
       type: "ADD_MEMORY",
       characterId: first.profile.id,
       memory: `${first.profile.name} and ${second.profile.name} ${pairTone} at ${location} around ${timeLabel}.`,
       note: "A new conversational memory was stored.",
+      source: "LLM_PACKAGE",
     },
     {
       type: "ADD_MEMORY",
       characterId: second.profile.id,
       memory: `${second.profile.name} and ${first.profile.name} ${pairTone} at ${location} around ${timeLabel}.`,
       note: "A mirrored memory was stored.",
+      source: "LLM_PACKAGE",
     },
     {
       type: "UPDATE_RELATIONSHIP",
@@ -672,6 +696,7 @@ export function buildConversation(
       targetCharacterId: second.profile.id,
       relationship: relationAfterConversation(first, second, candidate.reason),
       note: "The social relationship was adjusted.",
+      source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_RELATIONSHIP",
@@ -679,18 +704,21 @@ export function buildConversation(
       targetCharacterId: first.profile.id,
       relationship: relationAfterConversation(second, first, candidate.reason),
       note: "The social relationship was adjusted symmetrically.",
+      source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_OBJECTIVE",
       characterId: first.profile.id,
       objective: firstObjective,
       note: "The first participant received a new short-term objective.",
+      source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_OBJECTIVE",
       characterId: second.profile.id,
       objective: secondObjective,
       note: "The second participant received a new short-term objective.",
+      source: "CLASSIC_ENGINE",
     },
   ];
 
@@ -772,7 +800,9 @@ export function formatObjective(objective: NpcObjective | null): string {
 }
 
 export function formatWorldTime(time: WorldTime): string {
-  return `Day ${time.day}, ${time.hour.toString().padStart(2, "0")}:${time.minute.toString().padStart(2, "0")}`;
+  return `Day ${time.day}, ${time.hour.toString().padStart(2, "0")}:${time.minute
+    .toString()
+    .padStart(2, "0")}:${time.second.toString().padStart(2, "0")}`;
 }
 
 export function formatWeather(weather: Weather): string {
@@ -900,18 +930,21 @@ function buildPlayerConversation(
       characterId: npc.profile.id,
       mood,
       note: `${npc.profile.name} adjusted mood after talking with the player.`,
+      source: "LLM_PACKAGE",
     },
     {
       type: "UPDATE_OBJECTIVE",
       characterId: npc.profile.id,
       objective: nextObjective,
       note: `${npc.profile.name} refreshed their short-term objective.`,
+      source: "CLASSIC_ENGINE",
     },
     {
       type: "ADD_MEMORY",
       characterId: npc.profile.id,
       memory: `${npc.profile.name} spoke with the player near ${location}.`,
       note: "Player conversation stored as runtime memory.",
+      source: "LLM_PACKAGE",
     },
   ];
 
@@ -990,15 +1023,17 @@ function distance(first: Position, second: Position): number {
   return Math.abs(first.x - second.x) + Math.abs(first.y - second.y);
 }
 
-function advanceWorldTime(time: WorldTime, minutes: number): WorldTime {
-  const totalMinutes = time.day * 24 * 60 + time.hour * 60 + time.minute + minutes;
-  const day = Math.floor(totalMinutes / (24 * 60));
-  const remainder = totalMinutes % (24 * 60);
+function advanceWorldTime(time: WorldTime, seconds: number): WorldTime {
+  const totalSeconds =
+    time.day * 24 * 60 * 60 + time.hour * 60 * 60 + time.minute * 60 + time.second + seconds;
+  const day = Math.floor(totalSeconds / (24 * 60 * 60));
+  const remainder = totalSeconds % (24 * 60 * 60);
 
   return {
     day,
-    hour: Math.floor(remainder / 60),
-    minute: remainder % 60,
+    hour: Math.floor(remainder / 3600),
+    minute: Math.floor((remainder % 3600) / 60),
+    second: remainder % 60,
   };
 }
 
@@ -1019,8 +1054,9 @@ function toIsoTimestamp(time: WorldTime): string {
   const day = time.day.toString().padStart(2, "0");
   const hour = time.hour.toString().padStart(2, "0");
   const minute = time.minute.toString().padStart(2, "0");
+  const second = time.second.toString().padStart(2, "0");
 
-  return `2026-06-${day}T${hour}:${minute}:00.000Z`;
+  return `2026-06-${day}T${hour}:${minute}:${second}.000Z`;
 }
 
 function pickTemplate<T>(seed: string, templates: T[]): T {
@@ -1221,5 +1257,22 @@ function relationAfterConversation(
   return source.relationships[target.profile.id] === "STRANGER"
     ? "FRIEND"
     : source.relationships[target.profile.id];
+}
+
+function registerOverrideEvents(
+  existing: OverrideEvent[],
+  updates: CharacterUpdate[],
+  tick: number,
+): OverrideEvent[] {
+  const nextEvents = updates.map((update, index) => ({
+    id: `${tick}-${update.characterId}-${update.type}-${index}`,
+    tick,
+    characterId: update.characterId,
+    type: update.type,
+    source: update.source,
+    note: update.note,
+  }));
+
+  return [...nextEvents, ...existing].slice(0, 40);
 }
 

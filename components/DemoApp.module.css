@@ -1,7 +1,11 @@
 .shell {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 1.25rem;
   padding: 1.5rem;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
 }
 
 .header {
@@ -95,12 +99,20 @@
   display: grid;
   grid-template-columns: minmax(0, 1.9fr) minmax(22rem, 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .boardPanel,
 .panel {
   padding: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.contentPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .panelHeader {
@@ -210,6 +222,19 @@
   text-align: center;
 }
 
+.tokenAnimated {
+  transition:
+    left 650ms ease,
+    top 650ms ease,
+    opacity 260ms ease,
+    transform 260ms ease;
+}
+
+.tokenMoving {
+  opacity: 0.88;
+  transform: translate(-50%, -50%) scale(0.97);
+}
+
 .portrait {
   overflow: hidden;
   display: grid;
@@ -274,14 +299,11 @@
   background: linear-gradient(180deg, #0f172a, #1e3a8a);
 }
 
-.playerToken {
-  background: linear-gradient(180deg, #14532d, #166534);
-  outline: 3px solid rgba(74, 222, 128, 0.45);
-}
-
 .sideRail {
   display: grid;
   gap: 1rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .badge {
@@ -304,6 +326,8 @@
 .historyList {
   display: grid;
   gap: 0.75rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .logList {
@@ -322,7 +346,7 @@
 }
 
 .tableWrap {
-  overflow-x: auto;
+  overflow: auto;
   margin-bottom: 1rem;
 }
 
@@ -357,6 +381,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
   gap: 0.75rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .smallCard {
@@ -439,6 +465,70 @@
   color: #1d4ed8;
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.updateChipClassic {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.updateChipLlm {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.llmTag {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #6d28d9;
+}
+
+.overridePanel {
+  border: 1px solid #dbe4ef;
+  border-radius: 0.9rem;
+  padding: 0.8rem;
+  background: #f8fafc;
+}
+
+.overrideList {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.overrideItem {
+  border-radius: 0.7rem;
+  border: 1px solid transparent;
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.overrideItem p {
+  margin-top: 0.2rem;
+  color: #475569;
+  font-size: 0.83rem;
+  line-height: 1.4;
+}
+
+.overrideItem span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.overrideClassic {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.overrideLlm {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
 }
 
 .previewLine {
