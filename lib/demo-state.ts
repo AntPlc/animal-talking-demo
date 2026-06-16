@@ -1,6 +1,7 @@
 // Shared demo state, simulation rules, and the fake Animal Talking provider.
 
 import { NPC_PROFILES, type NpcProfile } from "./npc-data";
+import { findPathToGoal, nextPathStep } from "./pathfinder";
 
 export type { NpcProfile } from "./npc-data";
 
@@ -58,6 +59,7 @@ export interface NpcRuntimeState {
   objective: NpcObjective | null;
   shortHistory: string[];
   lastInteractionTick: number;
+  blockedTicks: number;
 }
 
 export interface NpcState {
@@ -238,6 +240,7 @@ export function createInitialDemoState(): DemoState {
           `Current goal: ${profile.goals[0]}.`,
         ],
         lastInteractionTick: -100,
+        blockedTicks: 0,
       },
       relationships,
       memories: [
@@ -287,10 +290,25 @@ export function advanceDemoState(state: DemoState): DemoState {
     occupied.add(positionKey(npc.runtime.position));
   }
 
+  // Cells adjacent to each non-conversation NPC: moving into these is soft-blocked
+  // to prevent card visual overlap. Bypassed when the NPC is explicitly approaching
+  // another NPC (destination is that NPC's occupied cell).
+  const softBlocked = new Set<string>();
+  for (const npc of state.npcs) {
+    if (npc.runtime.status === "in_conversation") continue;
+    const { x, y } = npc.runtime.position;
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && nx < GRID_WIDTH && ny >= 0 && ny < GRID_HEIGHT) {
+        softBlocked.add(positionKey({ x: nx, y: ny }));
+      }
+    }
+  }
+
   const nextNpcs: NpcState[] = [];
 
-  for (let index = 0; index < state.npcs.length; index += 1) {
-    const npc = state.npcs[index];
+  for (const npc of state.npcs) {
 
     if (npc.runtime.status === "in_conversation") {
       nextNpcs.push(npc);
@@ -301,8 +319,8 @@ export function advanceDemoState(state: DemoState): DemoState {
     occupied.delete(currentKey);
 
     const currentZone = getZoneForPosition(npc.runtime.position, state.zones);
-    const destination =
-      npc.runtime.destination ?? chooseDestination(npc, index, nextTick, state.zones, currentZone);
+    const explicitDestination = npc.runtime.destination;
+    const destination = explicitDestination ?? resolveObjectiveDestination(npc, state.zones, currentZone);
 
     if (!destination) {
       occupied.add(currentKey);
@@ -311,23 +329,79 @@ export function advanceDemoState(state: DemoState): DemoState {
         runtime: {
           ...npc.runtime,
           status: "idle" as const,
+          targetZoneId:
+            npc.runtime.objective?.type === "GO_TO_LOCATION" ? npc.runtime.objective.targetZoneId : null,
         },
       });
       continue;
     }
 
-    const nextPosition = stepToward(npc.runtime.position, destination);
-    const arrived = positionsEqual(nextPosition, destination);
-    const nextKey = positionKey(nextPosition);
+    const destinationIsOccupied = occupied.has(positionKey(destination));
+    const path = findPathToGoal(
+      npc.runtime.position,
+      destination,
+      GRID_WIDTH,
+      GRID_HEIGHT,
+      occupied,
+      softBlocked,
+      destinationIsOccupied,
+    );
 
-    if (occupied.has(nextKey)) {
+    const nextPosition = nextPathStep(path) ?? stepToward(npc.runtime.position, destination);
+    const arrived = hasReachedDestination(
+      nextPosition,
+      destination,
+      destinationIsOccupied,
+      npc.runtime.objective,
+      explicitDestination,
+      state.zones,
+    );
+    const nextKey = positionKey(nextPosition);
+    const blockedByProximity = softBlocked.has(nextKey) && !destinationIsOccupied;
+    const stuckInPlace = positionsEqual(nextPosition, npc.runtime.position) && !arrived;
+
+    if (stuckInPlace || occupied.has(nextKey) || blockedByProximity) {
+      const unblockPosition = chooseUnblockMove(
+        npc.runtime.position,
+        nextPosition,
+        occupied,
+        softBlocked,
+        destinationIsOccupied,
+        npc.runtime.blockedTicks ?? 0,
+      );
+
+      if (unblockPosition) {
+        occupied.add(positionKey(unblockPosition));
+        nextNpcs.push({
+          ...npc,
+          runtime: {
+            ...npc.runtime,
+            position: unblockPosition,
+            destination: explicitDestination,
+            targetZoneId: resolveTargetZoneId(npc, explicitDestination, destination, state.zones),
+            status: "moving" as const,
+            blockedTicks: 0,
+          },
+        });
+        continue;
+      }
+
+      const newBlockedTicks = (npc.runtime.blockedTicks ?? 0) + 1;
+      const shouldReroute = newBlockedTicks >= 2 && Boolean(explicitDestination);
       occupied.add(currentKey);
-      nextNpcs.push(npc);
+      nextNpcs.push({
+        ...npc,
+        runtime: {
+          ...npc.runtime,
+          status: "idle" as const,
+          blockedTicks: newBlockedTicks,
+          destination: shouldReroute ? null : explicitDestination,
+        },
+      });
       continue;
     }
 
     occupied.add(nextKey);
-    const targetZoneId = arrived ? null : getZoneForPosition(destination, state.zones)?.id ?? null;
     const nextStatus: NpcRuntimeState["status"] = arrived ? "idle" : "moving";
 
     nextNpcs.push({
@@ -335,9 +409,10 @@ export function advanceDemoState(state: DemoState): DemoState {
       runtime: {
         ...npc.runtime,
         position: nextPosition,
-        destination: arrived ? null : destination,
-        targetZoneId,
+        destination: explicitDestination && !arrived ? explicitDestination : null,
+        targetZoneId: resolveTargetZoneId(npc, explicitDestination, destination, state.zones),
         status: nextStatus,
+        blockedTicks: 0,
       },
     });
   }
@@ -354,7 +429,7 @@ export function advanceDemoState(state: DemoState): DemoState {
     tick: nextTick,
     worldTime: nextWorldTime,
     weather: nextWeather,
-    npcs: nextNpcs,
+    npcs: findApproachTarget(state, nextNpcs, nextTick),
     logs,
   };
 }
@@ -372,7 +447,8 @@ export function findInteractionCandidate(state: DemoState): InteractionCandidate
       const cooldownExpired =
         state.tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= 8;
 
-      if ((sameZone || closeEnough) && cooldownExpired) {
+      // Only trigger when physically adjacent — NPCs must have walked up to each other first.
+      if (closeEnough && cooldownExpired) {
         return {
           participantIds: [first.profile.id, second.profile.id],
           reason: sameZone ? "SAME_ZONE" : "PROXIMITY",
@@ -383,6 +459,49 @@ export function findInteractionCandidate(state: DemoState): InteractionCandidate
   }
 
   return null;
+}
+
+// Redirects one NPC from an eligible same-zone pair to walk toward the other so
+// they end up adjacent and can trigger a conversation.
+function findApproachTarget(state: DemoState, nextNpcs: NpcState[], tick: number): NpcState[] {
+  const available = nextNpcs.filter((npc) => npc.runtime.status !== "in_conversation");
+
+  for (let i = 0; i < available.length; i += 1) {
+    for (let j = i + 1; j < available.length; j += 1) {
+      const first = available[i];
+      const second = available[j];
+
+      const firstZone = getZoneForPosition(first.runtime.position, state.zones);
+      const secondZone = getZoneForPosition(second.runtime.position, state.zones);
+
+      if (!firstZone || firstZone.id !== secondZone?.id) continue;
+
+      const dist = distance(first.runtime.position, second.runtime.position);
+      if (dist <= 1) continue;
+
+      const cooldownExpired =
+        tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= 8;
+
+      if (!cooldownExpired) continue;
+
+      // Direct the first NPC toward the second's current position.
+      // The soft-block bypass in advanceDemoState lets the NPC reach distance=1,
+      // where it gets hard-blocked until findInteractionCandidate picks them up.
+      return nextNpcs.map((npc) => {
+        if (npc.profile.id !== first.profile.id) return npc;
+        return {
+          ...npc,
+          runtime: {
+            ...npc.runtime,
+            destination: second.runtime.position,
+            blockedTicks: 0,
+          },
+        };
+      });
+    }
+  }
+
+  return nextNpcs;
 }
 
 export function createScriptedInteraction(state: DemoState, reason: InteractionReason): InteractionCandidate | null {
@@ -623,10 +742,7 @@ export function applyConversationUpdates(
         nextRuntime = {
           ...nextRuntime,
           objective: update.objective,
-          destination:
-            update.objective.type === "GO_TO_LOCATION"
-              ? zoneCenter(getZoneById(zones, update.objective.targetZoneId) ?? zones[0])
-              : null,
+          destination: null,
           targetZoneId:
             update.objective.type === "GO_TO_LOCATION" ? update.objective.targetZoneId : null,
           status: "idle",
@@ -727,29 +843,155 @@ export function getDemoProfiles(): NpcProfile[] {
 
 export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   const profile = NPC_PROFILES.find((entry) => entry.id === savedNpc.profile.id) ?? savedNpc.profile;
+  const seedMemories = [
+    `Lives a quiet routine around the ${profile.preferredZoneId}.`,
+    `Known for being ${profile.personality[0]}.`,
+  ];
+  const conversationMemories = savedNpc.memories.filter(
+    (memory) => !memory.startsWith("Lives a quiet routine around the ") && !memory.startsWith("Known for being "),
+  );
 
   return {
     ...savedNpc,
     profile,
+    memories: [...seedMemories, ...conversationMemories].slice(0, 10),
+    runtime: {
+      ...savedNpc.runtime,
+      blockedTicks: savedNpc.runtime.blockedTicks ?? 0,
+      shortHistory: savedNpc.runtime.shortHistory.map((entry) =>
+        entry.startsWith("Current goal: ")
+          ? `Current goal: ${profile.goals[0]}.`
+          : entry.startsWith("Started the day in ")
+            ? `Started the day in ${profile.preferredZoneId}.`
+            : entry,
+      ),
+    },
   };
 }
 
-function chooseDestination(
+function resolveObjectiveDestination(
   npc: NpcState,
-  index: number,
-  tick: number,
   zones: WorldZone[],
   currentZone: WorldZone | undefined,
 ): Position | null {
-  const preferredZone = getZoneById(zones, npc.profile.preferredZoneId) ?? zones[0];
-  const targetZones = [preferredZone, ...zones.filter((zone) => zone.id !== preferredZone.id)];
-  const targetZone = targetZones[(tick + index) % targetZones.length];
+  const objective = npc.runtime.objective;
 
-  if (currentZone?.id === targetZone.id && tick % 2 === 0) {
+  if (!objective || objective.type === "IDLE") {
+    return null;
+  }
+
+  if (currentZone?.id === objective.targetZoneId) {
+    return null;
+  }
+
+  const targetZone = getZoneById(zones, objective.targetZoneId);
+  if (!targetZone) {
     return null;
   }
 
   return zoneCenter(targetZone);
+}
+
+function resolveTargetZoneId(
+  npc: NpcState,
+  explicitDestination: Position | null,
+  destination: Position,
+  zones: WorldZone[],
+): string | null {
+  if (npc.runtime.objective?.type === "GO_TO_LOCATION") {
+    return npc.runtime.objective.targetZoneId;
+  }
+
+  if (explicitDestination) {
+    return getZoneForPosition(destination, zones)?.id ?? null;
+  }
+
+  return null;
+}
+
+function hasReachedDestination(
+  position: Position,
+  destination: Position,
+  destinationIsOccupied: boolean,
+  objective: NpcObjective | null,
+  explicitDestination: Position | null,
+  zones: WorldZone[],
+): boolean {
+  if (explicitDestination) {
+    return destinationIsOccupied
+      ? distance(position, destination) <= 1
+      : positionsEqual(position, destination);
+  }
+
+  if (objective?.type === "GO_TO_LOCATION") {
+    return getZoneForPosition(position, zones)?.id === objective.targetZoneId;
+  }
+
+  return positionsEqual(position, destination);
+}
+
+function chooseUnblockMove(
+  current: Position,
+  blockedStep: Position,
+  occupied: Set<string>,
+  softBlocked: Set<string>,
+  destinationIsOccupied: boolean,
+  blockedTicks: number,
+): Position | null {
+  const forward = {
+    x: blockedStep.x - current.x,
+    y: blockedStep.y - current.y,
+  };
+  const back = { x: -forward.x, y: -forward.y };
+
+  const baseOrder: Position[] = [
+    back,
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+  ];
+
+  const tryOrder: Position[] = [];
+  for (const delta of baseOrder) {
+    if (delta.x === forward.x && delta.y === forward.y) {
+      continue;
+    }
+
+    if (tryOrder.some((existing) => existing.x === delta.x && existing.y === delta.y)) {
+      continue;
+    }
+
+    tryOrder.push(delta);
+  }
+
+  if (tryOrder.length === 0) {
+    return null;
+  }
+
+  const start = blockedTicks % tryOrder.length;
+  const ordered = [...tryOrder.slice(start), ...tryOrder.slice(0, start)];
+
+  for (const delta of ordered) {
+    const next = { x: current.x + delta.x, y: current.y + delta.y };
+
+    if (next.x < 0 || next.x >= GRID_WIDTH || next.y < 0 || next.y >= GRID_HEIGHT) {
+      continue;
+    }
+
+    const key = positionKey(next);
+    if (occupied.has(key)) {
+      continue;
+    }
+
+    if (softBlocked.has(key) && !destinationIsOccupied) {
+      continue;
+    }
+
+    return next;
+  }
+
+  return null;
 }
 
 function stepToward(current: Position, destination: Position): Position {
@@ -890,6 +1132,16 @@ function personalityCue(profile: NpcProfile): string {
       return "keeping things light";
     case "improvising":
       return "letting the moment decide";
+    case "welcoming":
+      return "making people feel at home";
+    case "business-minded":
+      return "always closing the loop";
+    case "blunt":
+      return "saying exactly what I think";
+    case "theatrical":
+      return "turning every sentence into a performance";
+    case "judgmental":
+      return "weighing everything and finding it lacking";
     default:
       return "staying in character";
   }
@@ -904,13 +1156,8 @@ function openingLine(
 ): string {
   const idea = first.profile.goals[0];
   const seed = `${first.profile.id}:${second.profile.id}:${location}:${weather}:${timeLabel}`;
-  return pickTemplate(seed, [
-    `Funny running into you here. ${location} has a completely different mood at ${timeLabel}, especially with ${weather.toLowerCase()} skies overhead.`,
-    `I was not expecting a detour like this. ${location} tends to reveal a different side of people when the day turns ${weather.toLowerCase()}.`,
-    `You always seem to show up at the interesting moment. I was just thinking about ${idea}, and then ${location} felt a lot less ordinary.`,
-    `This is a better place for a conversation than I expected. ${location} feels unusually alive for ${timeLabel}.`,
-    `Well, this is a pleasant surprise. The ${weather.toLowerCase()} weather makes ${location} feel a bit like a secret meeting spot.`,
-  ]);
+  const templates = openingTemplatesFor(first, second, location, weather, timeLabel, idea);
+  return pickTemplate(seed, templates);
 }
 
 function responseLine(
@@ -920,14 +1167,8 @@ function responseLine(
   weather: string,
 ): string {
   const seed = `${speaker.profile.id}:${other.profile.id}:${location}:${weather}`;
-  const personality = personalityCue(speaker.profile);
-  return pickTemplate(seed, [
-    `That works for me. I am ${personality}, and ${location} gives me enough room to think clearly.`,
-    `I can stay a while. ${other.profile.name} usually has something worth hearing, and today feels like one of those days.`,
-    `Sure. The ${weather.toLowerCase()} weather changes the pace, but it also makes this corner of ${location} easier to read.`,
-    `I like this better than the usual routine. ${personality} is easier when the day is this quiet.`,
-    `You picked the right moment. I was already halfway into my own thoughts, so ${location} feels almost intentional.`,
-  ]);
+  const templates = responseTemplatesFor(speaker, other, location, weather);
+  return pickTemplate(seed, templates);
 }
 
 function followUpLine(
@@ -939,13 +1180,8 @@ function followUpLine(
   const zoneText = zoneId ?? "town";
   const hourHint = time.hour < 12 ? "morning" : "afternoon";
   const seed = `${speaker.profile.id}:${other.profile.id}:${time.hour}:${zoneText}`;
-  return pickTemplate(seed, [
-    `If we keep talking, I can reshuffle my ${hourHint} plans around ${zoneText}.`,
-    `I should probably make room for this in my ${hourHint}. ${other.profile.name}'s schedule matters more than mine right now.`,
-    `Maybe this is the useful part of the day. I can adjust what comes next if we stay near ${zoneText}.`,
-    `That gives me something to work with. I will bend my ${hourHint} around ${zoneText} and see what changes.`,
-    `I am fine with that. A small pause here could save us both a longer detour later.`,
-  ]);
+  const templates = followUpTemplatesFor(speaker, other, zoneText, hourHint);
+  return pickTemplate(seed, templates);
 }
 
 function closingLine(
@@ -957,13 +1193,204 @@ function closingLine(
   const speakerObjective = firstObjective.label;
   const otherObjective = secondObjective.label;
   const seed = `${speaker.profile.id}:${other.profile.id}:${speakerObjective}:${otherObjective}`;
-  return pickTemplate(seed, [
-    `That sounds fair. I will keep ${speakerObjective} in mind, and I will remember how ${other.profile.name} is handling ${otherObjective}.`,
-    `Good enough for now. ${speakerObjective} is still on my list, but this conversation changed the order a little.`,
-    `I can work with that. ${other.profile.name} balancing ${otherObjective} tells me more than a long speech would have.`,
-    `Agreed. I will take ${speakerObjective} seriously, and I will not forget this little exchange with ${other.profile.name}.`,
-    `Then we are set. I have ${speakerObjective} to return to, and you have ${otherObjective} waiting for you.`,
-  ]);
+  const templates = closingTemplatesFor(speaker, other, speakerObjective, otherObjective);
+  return pickTemplate(seed, templates);
+}
+
+function openingTemplatesFor(
+  speaker: NpcState,
+  other: NpcState,
+  location: string,
+  weather: string,
+  timeLabel: string,
+  idea: string,
+): string[] {
+  switch (speaker.profile.id) {
+    case "npc_antoine":
+      return [
+        `Oh, splendid. ${other.profile.name} in ${location}. The day was going perfectly until now.`,
+        `Do you mind? I was mid-monologue. ${location} at ${timeLabel} is barely tolerable without visitors.`,
+        `Let me guess — you need something. Everyone who finds me at ${timeLabel} needs something.`,
+        `I was about to ${idea.toLowerCase()}, and then you appeared like a plot twist nobody asked for.`,
+        `Congratulations. You have ruined my favorite corner of ${location} simply by standing in it.`,
+      ];
+    case "npc_rosie":
+      return [
+        `Oh, ${other.profile.name}! What a lovely surprise here in ${location}. The ${weather.toLowerCase()} weather makes everything feel warmer.`,
+        `Perfect timing — I was just thinking about ${idea.toLowerCase()} and you always bring good news.`,
+        `Look who wandered into ${location}! Come closer, I saved you a spot and probably a story.`,
+      ];
+    case "npc_henri":
+      return [
+        `You're blocking the light. ...Fine. What broke this time?`,
+        `${location} at ${timeLabel}. Not my favorite place to talk, but the machine can wait.`,
+        `If this is about ${idea.toLowerCase()}, make it quick. I have tools that need judging.`,
+      ];
+    case "npc_tom":
+      return [
+        `Good timing — ${location} is busy at ${timeLabel} and I could use a familiar face.`,
+        `I was restocking mentally and physically. ${other.profile.name} showing up here feels like good business.`,
+      ];
+    case "npc_ben":
+      return [
+        `Quiet morning in ${location}. I was checking on things — ${idea.toLowerCase()} can wait a minute.`,
+        `${other.profile.name}, nice to see you. The ${weather.toLowerCase()} weather keeps the park honest.`,
+      ];
+    case "npc_celia":
+      return [
+        `Ha! ${other.profile.name}! I was just sweeping ${location} for news and you walked right into the story.`,
+        `You picked the best moment — ${location} always gets interesting around ${timeLabel}.`,
+      ];
+    case "npc_jeff":
+      return [
+        `Heads up — stay on the safe side in ${location}. What brings you through here at ${timeLabel}?`,
+        `Good to see a friendly face. I was on patrol, but ${other.profile.name} is worth a pause.`,
+      ];
+    case "npc_quentin":
+      return [
+        `Perfect acoustics in ${location} today! ${other.profile.name}, you have stage timing.`,
+        `I was hunting for a crowd and found you instead. Honestly? Better material.`,
+      ];
+    default:
+      return defaultOpeningTemplates(speaker, other, location, weather, timeLabel, idea);
+  }
+}
+
+function responseTemplatesFor(
+  speaker: NpcState,
+  other: NpcState,
+  location: string,
+  weather: string,
+): string[] {
+  const personality = personalityCue(speaker.profile);
+
+  switch (speaker.profile.id) {
+    case "npc_antoine":
+      return [
+        `Fine. Talk. But if this gets boring, I am walking away and you can explain yourself to the shelves.`,
+        `I am ${personality}, which means I will remember every ridiculous thing you say and quote it later.`,
+        `${other.profile.name}, your timing is awful and your weather small talk is worse. I am still listening. Barely.`,
+        `Don't flatter yourself — ${location} is not improved by your presence. I am simply too dramatic to ignore you.`,
+        `Keep going. I already dislike this conversation, and that usually means it will be memorable.`,
+      ];
+    case "npc_rosie":
+      return [
+        `Oh, I love that! ${location} feels cozier already. Stay a while — I am ${personality} when the day allows it.`,
+        `You always make ${other.profile.name} sound interesting. The ${weather.toLowerCase()} weather is no match for good company.`,
+        `Absolutely. I was hoping for exactly this kind of chat near ${location}.`,
+      ];
+    case "npc_henri":
+      return [
+        `Mm. Acceptable. I am ${personality}, so say what you mean and skip the poetry.`,
+        `Fine. ${location} is as good a place as any. Just don't touch anything that looks important.`,
+        `${other.profile.name} usually makes sense. That already puts this above most conversations.`,
+      ];
+    case "npc_quentin":
+      return [
+        `Yes! That has rhythm. I am ${personality}, so let's turn this corner of ${location} into something worth hearing.`,
+        `Say that again — it might be the hook for my next set.`,
+      ];
+    default:
+      return [
+        `That works for me. I am ${personality}, and ${location} gives me enough room to think clearly.`,
+        `I can stay a while. ${other.profile.name} usually has something worth hearing, and today feels like one of those days.`,
+        `Sure. The ${weather.toLowerCase()} weather changes the pace, but it also makes this corner of ${location} easier to read.`,
+        `I like this better than the usual routine. ${personality} is easier when the day is this quiet.`,
+        `You picked the right moment. I was already halfway into my own thoughts, so ${location} feels almost intentional.`,
+      ];
+  }
+}
+
+function followUpTemplatesFor(
+  speaker: NpcState,
+  other: NpcState,
+  zoneText: string,
+  hourHint: string,
+): string[] {
+  const idea = speaker.profile.goals[0];
+
+  switch (speaker.profile.id) {
+    case "npc_antoine":
+      return [
+        `Keep going. I was going to ${idea.toLowerCase()} anyway, and your presence is already ruining it beautifully.`,
+        `If we continue, I will miss my ${hourHint} plans around ${zoneText}. Worth it, if only to judge you more thoroughly.`,
+        `Fine. Bend my schedule around ${zoneText}. I am too petty to walk away mid-insult.`,
+      ];
+    case "npc_rosie":
+      return [
+        `I can shuffle my ${hourHint} baking around ${zoneText}. Good talk beats a perfect schedule.`,
+        `Stay near ${zoneText} a little longer — ${other.profile.name} always leaves me in a better mood.`,
+      ];
+    case "npc_celia":
+      return [
+        `Wait — that detail matters. I can delay my ${hourHint} sweep around ${zoneText} for this.`,
+        `If we keep talking, I might actually get a headline out of ${zoneText} today.`,
+      ];
+    default:
+      return [
+        `If we keep talking, I can reshuffle my ${hourHint} plans around ${zoneText}.`,
+        `I should probably make room for this in my ${hourHint}. ${other.profile.name}'s schedule matters more than mine right now.`,
+        `Maybe this is the useful part of the day. I can adjust what comes next if we stay near ${zoneText}.`,
+        `That gives me something to work with. I will bend my ${hourHint} around ${zoneText} and see what changes.`,
+        `I am fine with that. A small pause here could save us both a longer detour later.`,
+      ];
+  }
+}
+
+function closingTemplatesFor(
+  speaker: NpcState,
+  other: NpcState,
+  speakerObjective: string,
+  otherObjective: string,
+): string[] {
+  switch (speaker.profile.id) {
+    case "npc_antoine":
+      return [
+        `Good. Go handle ${otherObjective}. I have ${speakerObjective} and a reputation for cruelty to maintain.`,
+        `Agreed, if only to end this before you get sentimental. Do not make me regret tolerating you.`,
+        `Fine. ${other.profile.name} can chase ${otherObjective}. I will return to ${speakerObjective} and pretend this never happened.`,
+      ];
+    case "npc_rosie":
+      return [
+        `That sounds lovely. I will keep ${speakerObjective} in mind — and save something sweet for ${other.profile.name} next time.`,
+        `Deal! ${otherObjective} for you, ${speakerObjective} for me, and maybe another chat soon.`,
+      ];
+    case "npc_henri":
+      return [
+        `Acceptable. ${speakerObjective} is waiting, and ${other.profile.name} can manage ${otherObjective} without my supervision.`,
+        `Right. Back to work. Try not to break anything before I see you again.`,
+      ];
+    case "npc_quentin":
+      return [
+        `Perfect ending note! I am off to ${speakerObjective}, and ${other.profile.name} can chase ${otherObjective} on beat.`,
+        `That gave me a chorus. Go do ${otherObjective} — I have ${speakerObjective} and a crowd to find.`,
+      ];
+    default:
+      return [
+        `That sounds fair. I will keep ${speakerObjective} in mind, and I will remember how ${other.profile.name} is handling ${otherObjective}.`,
+        `Good enough for now. ${speakerObjective} is still on my list, but this conversation changed the order a little.`,
+        `I can work with that. ${other.profile.name} balancing ${otherObjective} tells me more than a long speech would have.`,
+        `Agreed. I will take ${speakerObjective} seriously, and I will not forget this little exchange with ${other.profile.name}.`,
+        `Then we are set. I have ${speakerObjective} to return to, and you have ${otherObjective} waiting for you.`,
+      ];
+  }
+}
+
+function defaultOpeningTemplates(
+  speaker: NpcState,
+  other: NpcState,
+  location: string,
+  weather: string,
+  timeLabel: string,
+  idea: string,
+): string[] {
+  return [
+    `Funny running into you here. ${location} has a completely different mood at ${timeLabel}, especially with ${weather.toLowerCase()} skies overhead.`,
+    `I was not expecting a detour like this. ${location} tends to reveal a different side of people when the day turns ${weather.toLowerCase()}.`,
+    `You always seem to show up at the interesting moment. I was just thinking about ${idea}, and then ${location} felt a lot less ordinary.`,
+    `This is a better place for a conversation than I expected. ${location} feels unusually alive for ${timeLabel}.`,
+    `Well, this is a pleasant surprise. The ${weather.toLowerCase()} weather makes ${location} feel a bit like a secret meeting spot.`,
+  ];
 }
 
 function moodFromContext(role: string, weather: Weather, hour: number): NpcMood {
@@ -977,6 +1404,10 @@ function moodFromContext(role: string, weather: Weather, hour: number): NpcMood 
 
   if (role === "musician" || role === "scout") {
     return "EXCITED";
+  }
+
+  if (role === "librarian") {
+    return "BUSY";
   }
 
   return "CURIOUS";

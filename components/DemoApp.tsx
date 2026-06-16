@@ -28,8 +28,8 @@ import {
   type OverrideEvent,
 } from "@/lib/demo-state";
 
-const STORAGE_KEY = "animal-talking-demo-state-v2";
-const STORAGE_VERSION = 2;
+const STORAGE_KEY = "animal-talking-demo-state-v3";
+const STORAGE_VERSION = 3;
 const TICK_INTERVAL_MS = 1800;
 const GENERATION_DELAY_MS = Number(process.env.NEXT_PUBLIC_GENERATION_DELAY_MS) || 20_000;
 
@@ -133,8 +133,6 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     return state.conversations.find((conversation) => conversation.id === state.activeConversationId) ?? null;
   }, [state.activeConversationId, state.conversations]);
 
-  const recentConversations = useMemo(() => state.conversations.slice(0, 6), [state.conversations]);
-
   function beginConversation(candidate: InteractionCandidate) {
     if (timerRef.current !== null) {
       return;
@@ -178,14 +176,19 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         </nav>
       </header>
 
-      <section className={styles.topRow} aria-label="World summary">
+      <section
+        className={`${styles.topRow} ${isSimulationView ? styles.topRowSimulation : ""}`}
+        aria-label="World summary"
+      >
         <SummaryCard label="World time" value={formatWorldTime(state.worldTime)} />
         <SummaryCard label="Weather" value={`${weatherIcon(state.weather)} ${formatWeather(state.weather)}`} />
         <SummaryCard label="Elapsed (real)" value={formatElapsed(elapsedMs)} />
-        <SummaryCard
-          label="Active conversation"
-          value={activeConversation ? activeConversation.summary : "None"}
-        />
+        {!isSimulationView ? (
+          <SummaryCard
+            label="Active conversation"
+            value={activeConversation ? activeConversation.summary : "None"}
+          />
+        ) : null}
       </section>
 
       <div
@@ -233,13 +236,15 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
             <div className={styles.tokensLayer} aria-hidden="true">
               {state.npcs.map((npc) => {
                 const active = activeConversation?.participantIds.includes(npc.profile.id) ?? false;
-                const generating = active && activeConversation?.status === "generating";
+                const chatting = active && activeConversation?.status === "generating";
+                const blocked = !active && (npc.runtime.blockedTicks ?? 0) >= 1;
                 return (
                   <NpcToken
                     key={npc.profile.id}
                     npc={npc}
                     active={active}
-                    generating={generating}
+                    chatting={chatting}
+                    blocked={blocked}
                     zones={state.zones}
                   />
                 );
@@ -248,61 +253,37 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
           </div>
         </section>
 
-        <aside className={styles.sideRail}>
-          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Conversation status">
+        <aside className={styles.conversationFeed} aria-label="Generated conversations">
+          <section className={`${styles.panel} ${styles.conversationFeedPanel}`}>
             <div className={styles.panelHeader}>
               <div>
-                <h2>Conversation pipeline</h2>
+                <h2>Generated conversations</h2>
                 <p>
-                  NPC interactions are triggered automatically when characters meet in the same zone
-                  or get close enough. Movement follows their objectives and the simulation tick.
+                  Full dialogue and structured updates appear here as soon as a conversation
+                  finishes. Scroll to review earlier exchanges from today.
                 </p>
+                <div className={styles.sourceLegend} aria-label="Override source colors">
+                  <span className={styles.updateChipClassic}>Classic engine</span>
+                  <span className={styles.updateChipLlm}>Package LLM</span>
+                </div>
               </div>
               <span className={styles.badge}>
                 {activeConversation ? activeConversation.status : "idle"}
               </span>
             </div>
 
-            <div className={styles.panelScroll}>
-              {activeConversation ? (
-                <ConversationCard conversation={activeConversation} />
+            <div className={`${styles.panelScroll} ${styles.historyList}`}>
+              {state.conversations.length > 0 ? (
+                state.conversations.map((conversation) => (
+                  <ConversationCard key={conversation.id} conversation={conversation} />
+                ))
               ) : (
                 <p className={styles.placeholder}>
-                  No conversation is running right now. NPCs will trigger one automatically when they
-                  meet.
+                  No conversations yet. NPCs will trigger one automatically when they meet on the
+                  map.
                 </p>
               )}
             </div>
-          </section>
-
-          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Recent interactions">
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>Recent interactions</h2>
-                <p>Latest structured results applied to the runtime state.</p>
-              </div>
-            </div>
-
-            <div className={`${styles.panelScroll} ${styles.cardList}`}>
-              {recentConversations.map((conversation) => (
-                <ConversationPreview key={conversation.id} conversation={conversation} />
-              ))}
-            </div>
-          </section>
-
-          <section className={`${styles.panel} ${styles.railPanel}`} aria-label="Debug log">
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>Debug trail</h2>
-                <p>Useful for demo narration and verification.</p>
-              </div>
-            </div>
-
-            <ul className={`${styles.panelScroll} ${styles.logList}`}>
-              {state.logs.slice(0, 6).map((log) => (
-                <li key={log}>{log}</li>
-              ))}
-            </ul>
           </section>
         </aside>
       </div>
@@ -311,20 +292,41 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
 
   function renderHistoryView() {
     return (
-      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Conversation history">
-        <div className={styles.panelHeader}>
-          <div>
-            <h2>Saved conversations</h2>
-            <p>These are persisted locally and can be reopened after a reload.</p>
+      <div className={styles.historyLayout}>
+        <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Conversation history">
+          <div className={styles.panelHeader}>
+            <div>
+              <h2>Saved conversations</h2>
+              <p>These are persisted locally and can be reopened after a reload.</p>
+            </div>
           </div>
-        </div>
 
-        <div className={styles.historyList}>
-          {recentConversations.map((conversation) => (
-            <ConversationCard key={conversation.id} conversation={conversation} />
-          ))}
-        </div>
-      </section>
+          <div className={styles.historyList}>
+            {state.conversations.length > 0 ? (
+              state.conversations.map((conversation) => (
+                <ConversationCard key={conversation.id} conversation={conversation} />
+              ))
+            ) : (
+              <p className={styles.placeholder}>No saved conversations yet.</p>
+            )}
+          </div>
+        </section>
+
+        <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Debug trail">
+          <div className={styles.panelHeader}>
+            <div>
+              <h2>Debug trail</h2>
+              <p>Useful for demo narration and verification.</p>
+            </div>
+          </div>
+
+          <ul className={styles.logList}>
+            {state.logs.map((log) => (
+              <li key={log}>{log}</li>
+            ))}
+          </ul>
+        </section>
+      </div>
     );
   }
 
@@ -451,30 +453,46 @@ function NpcPortrait({
 function NpcToken({
   npc,
   active,
-  generating,
+  chatting,
+  blocked,
   zones,
 }: Readonly<{
   npc: NpcState;
   active: boolean;
-  generating: boolean;
+  chatting: boolean;
+  blocked: boolean;
   zones: DemoState["zones"];
 }>) {
   const zone = getZoneForPosition(npc.runtime.position, zones);
   const left = `${((npc.runtime.position.x + 0.5) / getGridWidth()) * 100}%`;
   const top = `${((npc.runtime.position.y + 0.5) / getGridHeight()) * 100}%`;
+  const rerouting = (npc.runtime.blockedTicks ?? 0) >= 2;
+  const zoneLabel = zone?.name ?? "the world";
 
   return (
-    <div
-      className={`${styles.token} ${styles.tokenAnimated} ${active ? styles.tokenActive : ""} ${generating ? styles.tokenGenerating : ""} ${npc.runtime.status === "moving" ? styles.tokenMoving : ""}`}
-      style={{ left, top }}
-      title={
-        generating
-          ? `${npc.profile.name} is generating dialogue in ${zone?.name ?? "the world"}`
-          : `${npc.profile.name} in ${zone?.name ?? "the world"}`
-      }
-    >
-      <NpcPortrait profile={npc.profile} className={styles.tokenPortrait} />
-      <small>{generating ? "Generating…" : npc.profile.name}</small>
+    <div className={`${styles.tokenWrapper} ${styles.tokenAnimated}`} style={{ left, top, zIndex: chatting ? 10 : 2 }}>
+      {chatting ? (
+        <div className={styles.speechBubble} aria-label={`${npc.profile.name} is talking`}>
+          <span className={styles.speechBubbleDots} aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+      ) : null}
+      <div
+        className={`${styles.token} ${active ? styles.tokenActive : ""} ${blocked && !active ? styles.tokenBlocked : ""} ${npc.runtime.status === "moving" ? styles.tokenMoving : ""}`}
+        title={
+          chatting
+            ? `${npc.profile.name} is talking in ${zoneLabel}`
+            : rerouting
+              ? `${npc.profile.name} in ${zoneLabel} (rerouting)`
+              : `${npc.profile.name} — ${npc.profile.lore}`
+        }
+      >
+        <NpcPortrait profile={npc.profile} className={styles.tokenPortrait} />
+        <small>{npc.profile.name}</small>
+      </div>
     </div>
   );
 }
@@ -513,33 +531,6 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
             {update.type}
           </span>
         ))}
-      </div>
-    </article>
-  );
-}
-
-function ConversationPreview({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
-  return (
-    <article className={styles.previewCard}>
-      <div className={styles.conversationHeader}>
-        <div>
-          <strong>{conversation.participantNames.join(" + ")}</strong>
-          <p>{conversation.summary}</p>
-        </div>
-        <span className={styles.badge}>{conversation.generatedTurnCount} turns</span>
-      </div>
-
-      <div className={styles.previewLine}>
-        <span>Status</span>
-        <strong>{conversation.status}</strong>
-      </div>
-      <div className={styles.previewLine}>
-        <span>Started</span>
-        <strong>{conversation.startedAt}</strong>
-      </div>
-      <div className={styles.previewLine}>
-        <span>Reason</span>
-        <strong>{conversation.reason}</strong>
       </div>
     </article>
   );
