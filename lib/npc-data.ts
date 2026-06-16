@@ -52,7 +52,7 @@ export const NPC_PROFILES: NpcProfile[] = [
       "Celia moves fast, collects rumors, and always returns with the first useful clue of the day.",
   },
   {
-    id: "npc_henti",
+    id: "npc_henri",
     name: "Henri",
     role: "mechanic",
     monogram: "HE",
