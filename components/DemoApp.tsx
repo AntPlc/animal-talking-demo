@@ -35,7 +35,8 @@ import {
   type PlayerState,
 } from "@/lib/demo-state";
 
-const STORAGE_KEY = "animal-talking-demo-state-v1";
+const STORAGE_KEY = "animal-talking-demo-state-v2";
+const STORAGE_VERSION = 2;
 const TICK_INTERVAL_MS = 1800;
 const GENERATION_DELAY_MS = 1100;
 
@@ -647,7 +648,18 @@ function readSavedState(): DemoState | null {
   }
 
   try {
-    return JSON.parse(rawValue) as DemoState;
+    const parsed = JSON.parse(rawValue) as
+      | DemoState
+      | {
+          version?: number;
+          state?: DemoState;
+        };
+
+    if (isSavedDemoState(parsed)) {
+      return parsed.state;
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -668,7 +680,13 @@ function writeSavedState(state: DemoState) {
     return;
   }
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: STORAGE_VERSION,
+      state,
+    }),
+  );
 }
 
 function normalizeSavedState(state: DemoState): DemoState {
@@ -708,6 +726,20 @@ function normalizeSavedState(state: DemoState): DemoState {
     }),
     logs: [`Recovered from interrupted conversation ${state.activeConversationId}.`, ...state.logs].slice(0, 20),
   };
+}
+
+function isSavedDemoState(
+  value: DemoState | { version?: number; state?: DemoState },
+): value is { version: number; state: DemoState } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "version" in value &&
+    value.version === STORAGE_VERSION &&
+    "state" in value &&
+    typeof value.state === "object" &&
+    value.state !== null
+  );
 }
 
 function keyToDirection(key: string): "up" | "down" | "left" | "right" | null {
