@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run check:demo-state",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app"
+    "lint": "eslint app",
+    "check:demo-state": "node scripts/verify-demo-state.mjs"
   },
   "dependencies": {
     "next": "16.2.9",

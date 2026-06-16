@@ -188,16 +188,16 @@ const BASE_ZONES: WorldZone[] = [
   },
 ];
 
-const INITIAL_POSITIONS: Record<string, Position> = {
+const INITIAL_POSITIONS = {
   npc_tom: { x: 9, y: 1 },
   npc_ben: { x: 2, y: 5 },
   npc_celia: { x: 1, y: 1 },
-  npc_henti: { x: 6, y: 1 },
+  npc_henri: { x: 6, y: 1 },
   npc_rosie: { x: 5, y: 0 },
   npc_jeff: { x: 8, y: 6 },
   npc_antoine: { x: 10, y: 0 },
   npc_quentin: { x: 3, y: 4 },
-};
+} satisfies Record<NpcProfile["id"], Position>;
 
 const OBJECTIVE_BY_ROLE: Record<string, NpcObjective> = {
   curator: { type: "GO_TO_LOCATION", targetZoneId: "library", label: "Review the archive" },
@@ -223,7 +223,7 @@ export function createInitialDemoState(): DemoState {
     return {
       profile,
       runtime: {
-        position: INITIAL_POSITIONS[profile.id],
+        position: getInitialPosition(profile.id),
         destination: null,
         targetZoneId: null,
         status: "idle" as const,
@@ -266,6 +266,18 @@ export function createInitialDemoState(): DemoState {
       "No LLM needed yet: the fake provider can already generate structured dialogue.",
     ],
   };
+}
+
+function getInitialPosition(profileId: NpcProfile["id"]): Position {
+  if (!isNpcProfileId(profileId)) {
+    throw new Error(`Missing initial position for NPC ${profileId}.`);
+  }
+
+  return INITIAL_POSITIONS[profileId];
+}
+
+function isNpcProfileId(profileId: string): profileId is keyof typeof INITIAL_POSITIONS {
+  return profileId in INITIAL_POSITIONS;
 }
 
 export function advanceDemoState(state: DemoState): DemoState {

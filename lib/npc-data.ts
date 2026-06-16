@@ -60,7 +60,7 @@ export const NPC_PROFILES: NpcProfile[] = [
     portraitAlt: "Portrait de Henri, le mécanicien du marché",
     personality: ["precise", "dry", "focused"],
     goals: ["inspect broken tools", "help with repairs"],
-    preferredZoneId: "market",  
+    preferredZoneId: "market",
     lore:
       "Henri repairs anything with moving parts and never trusts a machine until it has been tested twice.",
   },
@@ -75,7 +75,7 @@ export const NPC_PROFILES: NpcProfile[] = [
     goals: ["restock the morning shelves", "share a fresh recipe"],
     preferredZoneId: "market",
     lore:
-      "Elia feeds the whole village before sunrise and remembers who came by for bread, tea, or comfort.",
+      "Rosie feeds the whole village before sunrise and remembers who came by for bread, tea, or comfort.",
   },
   {
     id: "npc_jeff",
@@ -88,7 +88,7 @@ export const NPC_PROFILES: NpcProfile[] = [
     goals: ["check the pond path", "keep everyone safe"],
     preferredZoneId: "pond",
     lore:
-      "Hugo watches the pond path like a sentry and knows every safe route around the water.",
+      "Jeff watches the pond path like a sentry and knows every safe route around the water.",
   },
   {
     id: "npc_antoine",
