@@ -1,22 +1,36 @@
-# Volet 168H — Animal Talking
+# Animal Talking Demo
 
-Application POC Next.js + TypeScript.
+Frontend demo for the Animal Talking sprint. The current implementation is a
+fully client-side Next.js app with:
 
-## Prérequis
+- a 2D NPC grid;
+- deterministic movement and proximity-triggered interactions;
+- a structured fake Animal Talking provider;
+- conversation history persisted in `localStorage`;
+- a read-only NPC database view.
+
+## Prerequisites
 
 - Node.js 20+
-- Chrome ou Edge récent (WebGPU requis pour le LLM, issues suivantes)
+- a modern Chromium browser for local development
 
-## Démarrage
+## Run locally
 
 ```bash
-cd volet-168h
 npm install
 npm run dev
 ```
 
-Ouvrir [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000).
 
-## Documentation projet
+## Routes
 
-Voir le [README racine](../README.md) et le [cadrage développeur](../docs/cadrage-developpeur.md).
+- `/` - live simulation
+- `/history` - saved conversations
+- `/database` - NPC runtime snapshot
+
+## Notes
+
+- The docs mention `volet-168h/`, but this checkout already is the demo root.
+- The WebLLM/WebGPU integration is intentionally left for the next iteration; the
+  current demo focuses on the simulation and structured dialogue pipeline.

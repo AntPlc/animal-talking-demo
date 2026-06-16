@@ -13,9 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Animal Talking — POC 168H",
-  description:
-    "Dialogues PNJ générés par un LLM local dans le navigateur (ETNA group-1076685).",
+  title: "Animal Talking Demo",
+  description: "Frontend-only NPC simulation with structured conversations and local persistence.",
 };
 
 export default function RootLayout({
