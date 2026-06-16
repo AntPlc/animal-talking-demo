@@ -114,6 +114,6 @@ export const NPC_PROFILES: NpcProfile[] = [
     goals: ["find a place to perform", "lift the town mood"],
     preferredZoneId: "plaza",
     lore:
-      "Jules turns any empty corner into a stage and can change the mood of the plaza with one song.",
+      "Quentin turns any empty corner into a stage and can change the mood of the plaza with one song.",
   },
 ];
