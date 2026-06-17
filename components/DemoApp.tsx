@@ -18,7 +18,9 @@ import {
   getGridWidth,
   getZoneForPosition,
   hydrateNpcProfile,
+  randomizeNpcPositions,
   startInteraction,
+  type CharacterUpdate,
   type ConversationRecord,
   type DemoState,
   type DemoView,
@@ -28,8 +30,11 @@ import {
   type OverrideEvent,
 } from "@/lib/demo-state";
 
-const STORAGE_KEY = "animal-talking-demo-state-v3";
-const STORAGE_VERSION = 3;
+const STORAGE_KEY = "animal-talking-demo-state-v4";
+const STORAGE_VERSION = 4;
+// Presence of this key in sessionStorage signals a normal reload (not hard refresh).
+// sessionStorage is cleared on Shift+F5 / Ctrl+Shift+R, preserved on F5.
+const SESSION_KEY = "animal-talking-session-v4";
 const TICK_INTERVAL_MS = 1800;
 const GENERATION_DELAY_MS = Number(process.env.NEXT_PUBLIC_GENERATION_DELAY_MS) || 20_000;
 
@@ -61,10 +66,20 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   const hasHydratedStorageRef = useRef(false);
 
   useEffect(() => {
+    // Detect hard refresh: sessionStorage has no marker → Shift+F5 or new tab.
+    // On normal F5 the marker survives, so we keep the saved state untouched.
+    const isHardRefresh = typeof sessionStorage !== "undefined" && !sessionStorage.getItem(SESSION_KEY);
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(SESSION_KEY, "1");
+    }
+
     const saved = readSavedState();
 
     if (saved) {
-      setState(normalizeSavedState(saved));
+      const normalized = normalizeSavedState(saved);
+      setState(isHardRefresh ? randomizeNpcPositions(normalized, Date.now()) : normalized);
+    } else if (isHardRefresh) {
+      setState((current) => randomizeNpcPositions(current, Date.now()));
     }
 
     hasHydratedStorageRef.current = true;
@@ -497,6 +512,26 @@ function NpcToken({
   );
 }
 
+function formatUpdateChip(
+  update: CharacterUpdate,
+  participantIds: [string, string],
+  participantNames: [string, string],
+): string {
+  const idx = participantIds.indexOf(update.characterId);
+  const name = idx >= 0 ? participantNames[idx].split(" ")[0] : "?";
+
+  switch (update.type) {
+    case "UPDATE_MOOD":
+      return `${name}: ${update.mood}`;
+    case "UPDATE_OBJECTIVE":
+      return `${name}: ${update.objective.label}`;
+    case "ADD_MEMORY":
+      return `${name}: mémoire+`;
+    case "UPDATE_RELATIONSHIP":
+      return `${name}: → ${update.relationship.toLowerCase().replace("_", " ")}`;
+  }
+}
+
 function ConversationCard({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   return (
     <article className={styles.conversationCard}>
@@ -527,12 +562,13 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
       </div>
 
       <div className={styles.updateList}>
-        {conversation.updates.slice(0, 4).map((update, index) => (
+        {conversation.updates.map((update, index) => (
           <span
             key={`${conversation.id}-${index}`}
             className={`${styles.updateChip} ${update.source === "CLASSIC_ENGINE" ? styles.updateChipClassic : styles.updateChipLlm}`}
+            title={update.note}
           >
-            {update.type}
+            {formatUpdateChip(update, conversation.participantIds, conversation.participantNames)}
           </span>
         ))}
       </div>
@@ -586,6 +622,25 @@ function writeSavedState(state: DemoState) {
 function normalizeSavedState(state: DemoState & { player?: unknown }): DemoState {
   const { player: _player, ...rest } = state;
 
+  // Always release any NPC stuck in_conversation — can happen if a previous
+  // recovery pass cleared activeConversationId but didn't reset the NPC status
+  // (old code), or if the state is otherwise inconsistent.
+  const normalizedNpcs = rest.npcs.map((npc) => {
+    const hydrated = hydrateNpcProfile(npc);
+    if (hydrated.runtime.status !== "in_conversation") {
+      return hydrated;
+    }
+    return {
+      ...hydrated,
+      runtime: {
+        ...hydrated.runtime,
+        status: "idle" as const,
+        destination: null,
+        lastInteractionTick: rest.tick,
+      },
+    };
+  });
+
   const baseState = {
     ...rest,
     worldTime: {
@@ -593,33 +648,17 @@ function normalizeSavedState(state: DemoState & { player?: unknown }): DemoState
       second: rest.worldTime.second ?? 0,
     },
     recentOverrides: rest.recentOverrides ?? [],
+    npcs: normalizedNpcs,
   };
 
   if (!rest.activeConversationId) {
-    return {
-      ...baseState,
-      npcs: rest.npcs.map(hydrateNpcProfile),
-    };
+    return baseState;
   }
 
   const completedAt = new Date().toISOString();
 
   return {
     ...baseState,
-    npcs: rest.npcs.map((npc) => {
-      const hydrated = hydrateNpcProfile(npc);
-      if (hydrated.runtime.status !== "in_conversation") {
-        return hydrated;
-      }
-      return {
-        ...hydrated,
-        runtime: {
-          ...hydrated.runtime,
-          status: "idle" as const,
-          destination: null,
-        },
-      };
-    }),
     activeConversationId: null,
     conversations: rest.conversations.map((conversation) => {
       if (conversation.id !== rest.activeConversationId) {

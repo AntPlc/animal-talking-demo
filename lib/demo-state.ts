@@ -217,6 +217,68 @@ const OBJECTIVE_BY_ROLE: Record<string, NpcObjective> = {
   musician: { type: "GO_TO_LOCATION", targetZoneId: "plaza", label: "Prepare a short set" },
 };
 
+// Minimal seeded LCG so randomization is deterministic per call-site seed.
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+function pickRandomFreeCell(
+  zone: WorldZone,
+  occupied: Set<string>,
+  rand: () => number,
+): Position {
+  const xs = zone.bottomRight.x - zone.topLeft.x + 1;
+  const ys = zone.bottomRight.y - zone.topLeft.y + 1;
+  const total = xs * ys;
+  const start = Math.floor(rand() * total);
+
+  for (let i = 0; i < total; i += 1) {
+    const idx = (start + i) % total;
+    const pos: Position = {
+      x: zone.topLeft.x + (idx % xs),
+      y: zone.topLeft.y + Math.floor(idx / xs),
+    };
+    const key = positionKey(pos);
+    if (!occupied.has(key)) {
+      return pos;
+    }
+  }
+
+  // Fallback: zone is full, return top-left (shouldn't happen with 8 NPCs).
+  return zone.topLeft;
+}
+
+// Place every NPC at a random free cell within their preferred zone.
+// Uses Date.now() as seed so each hard-refresh produces a different layout.
+export function randomizeNpcPositions(state: DemoState, seed: number): DemoState {
+  const rand = lcg(seed);
+  const occupied = new Set<string>();
+
+  const npcs = state.npcs.map((npc) => {
+    const zone =
+      getZoneById(state.zones, npc.profile.preferredZoneId) ?? state.zones[0];
+    const position = pickRandomFreeCell(zone, occupied, rand);
+    occupied.add(positionKey(position));
+
+    return {
+      ...npc,
+      runtime: {
+        ...npc.runtime,
+        position,
+        destination: null,
+        status: "idle" as const,
+        blockedTicks: 0,
+      },
+    };
+  });
+
+  return { ...state, npcs };
+}
+
 export function createInitialDemoState(): DemoState {
   const npcs = NPC_PROFILES.map((profile) => {
     const relationships: Record<string, RelationshipType> = {};
@@ -444,7 +506,7 @@ export function advanceDemoState(state: DemoState): DemoState {
     `Tick ${nextTick}: ${nextWorldTime.hour.toString().padStart(2, "0")}:${nextWorldTime.minute
       .toString()
       .padStart(2, "0")}:${nextWorldTime.second.toString().padStart(2, "0")} - weather ${nextWeather}.`,
-  ].slice(-20);
+  ].slice(-40);
 
   return {
     ...state,
@@ -631,7 +693,11 @@ export function finishInteraction(
     }),
     npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
     recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
-    logs: [`Conversation ${state.activeConversationId} completed.`, ...state.logs].slice(0, 20),
+    logs: [
+      `Conversation ${state.activeConversationId} completed.`,
+      ...dialogue.updates.map((u) => `[${u.source === "LLM_PACKAGE" ? "LLM" : "Engine"}] ${u.note}`),
+      ...state.logs,
+    ].slice(0, 40),
   };
 }
 
@@ -678,63 +744,68 @@ export function buildConversation(
     };
   });
 
+  const firstRelationship = relationAfterConversation(first, second, candidate.reason);
+  const secondRelationship = relationAfterConversation(second, first, candidate.reason);
+  const firstMemory = `${first.profile.name} and ${second.profile.name} ${pairTone} at ${location} around ${timeLabel}.`;
+  const secondMemory = `${second.profile.name} and ${first.profile.name} ${pairTone} at ${location} around ${timeLabel}.`;
+
   const updates: CharacterUpdate[] = [
     {
       type: "UPDATE_MOOD",
       characterId: first.profile.id,
       mood: firstMood,
-      note: `${first.profile.name} felt more ${firstMood.toLowerCase()} after the exchange.`,
+      note: `${first.profile.name}: mood → ${firstMood}`,
       source: "LLM_PACKAGE",
     },
     {
       type: "UPDATE_MOOD",
       characterId: second.profile.id,
       mood: secondMood,
-      note: `${second.profile.name} adjusted their mood after the exchange.`,
+      note: `${second.profile.name}: mood → ${secondMood}`,
       source: "LLM_PACKAGE",
     },
     {
       type: "ADD_MEMORY",
       characterId: first.profile.id,
-      memory: `${first.profile.name} and ${second.profile.name} ${pairTone} at ${location} around ${timeLabel}.`,
-      note: "A new conversational memory was stored.",
+      memory: firstMemory,
+      note: `${first.profile.name}: memory → "${firstMemory}"`,
       source: "LLM_PACKAGE",
     },
     {
       type: "ADD_MEMORY",
       characterId: second.profile.id,
-      memory: `${second.profile.name} and ${first.profile.name} ${pairTone} at ${location} around ${timeLabel}.`,
-      note: "A mirrored memory was stored.",
+      memory: secondMemory,
+      note: `${second.profile.name}: memory → "${secondMemory}"`,
       source: "LLM_PACKAGE",
     },
     {
       type: "UPDATE_RELATIONSHIP",
       characterId: first.profile.id,
       targetCharacterId: second.profile.id,
-      relationship: relationAfterConversation(first, second, candidate.reason),
-      note: "The social relationship was adjusted.",
+      relationship: firstRelationship,
+      note: `${first.profile.name} → ${second.profile.name}: relation → ${firstRelationship}`,
       source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_RELATIONSHIP",
       characterId: second.profile.id,
       targetCharacterId: first.profile.id,
-      relationship: relationAfterConversation(second, first, candidate.reason),
-      note: "The social relationship was adjusted symmetrically.",
+      relationship: secondRelationship,
+      note: `${second.profile.name} → ${first.profile.name}: relation → ${secondRelationship}`,
       source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_OBJECTIVE",
       characterId: first.profile.id,
       objective: firstObjective,
-      note: "The first participant received a new short-term objective.",
+      note: `${first.profile.name}: goal → ${firstObjective.label}`,
       source: "CLASSIC_ENGINE",
     },
     {
       type: "UPDATE_OBJECTIVE",
       characterId: second.profile.id,
       objective: secondObjective,
-      note: "The second participant received a new short-term objective.",
+      note: `${second.profile.name}: goal → ${secondObjective.label}`,
       source: "CLASSIC_ENGINE",
     },
   ];
