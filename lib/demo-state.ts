@@ -154,6 +154,10 @@ export interface InteractionCandidate {
 
 const GRID_WIDTH = 12;
 const GRID_HEIGHT = 8;
+// Minimum ticks between two NPCs interacting (or being directed toward each other).
+// At TICK_INTERVAL_MS=1800 this equals ~7.2 s — short enough to allow chaining,
+// long enough to prevent instant re-trigger.
+const INTERACTION_COOLDOWN_TICKS = 4;
 
 const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "SUNNY", "STORMY"];
 const WEATHER_CHANGE_INTERVAL_TICKS = 6;
@@ -323,16 +327,34 @@ export function advanceDemoState(state: DemoState): DemoState {
     const destination = explicitDestination ?? resolveObjectiveDestination(npc, state.zones, currentZone);
 
     if (!destination) {
-      occupied.add(currentKey);
-      nextNpcs.push({
-        ...npc,
-        runtime: {
-          ...npc.runtime,
-          status: "idle" as const,
-          targetZoneId:
-            npc.runtime.objective?.type === "GO_TO_LOCATION" ? npc.runtime.objective.targetZoneId : null,
-        },
-      });
+      const wanderTarget = pickWanderCell(npc, currentZone, occupied, nextTick, state.npcs.indexOf(npc));
+
+      if (wanderTarget) {
+        const wanderKey = positionKey(wanderTarget);
+        occupied.add(wanderKey);
+        nextNpcs.push({
+          ...npc,
+          runtime: {
+            ...npc.runtime,
+            position: wanderTarget,
+            status: "moving" as const,
+            targetZoneId:
+              npc.runtime.objective?.type === "GO_TO_LOCATION" ? npc.runtime.objective.targetZoneId : null,
+            blockedTicks: 0,
+          },
+        });
+      } else {
+        occupied.add(currentKey);
+        nextNpcs.push({
+          ...npc,
+          runtime: {
+            ...npc.runtime,
+            status: "idle" as const,
+            targetZoneId:
+              npc.runtime.objective?.type === "GO_TO_LOCATION" ? npc.runtime.objective.targetZoneId : null,
+          },
+        });
+      }
       continue;
     }
 
@@ -429,7 +451,9 @@ export function advanceDemoState(state: DemoState): DemoState {
     tick: nextTick,
     worldTime: nextWorldTime,
     weather: nextWeather,
-    npcs: findApproachTarget(state, nextNpcs, nextTick),
+    npcs: state.activeConversationId
+      ? nextNpcs
+      : findApproachTarget(state, nextNpcs, nextTick),
     logs,
   };
 }
@@ -445,7 +469,7 @@ export function findInteractionCandidate(state: DemoState): InteractionCandidate
         getZoneForPosition(second.runtime.position, state.zones)?.id;
       const closeEnough = distance(first.runtime.position, second.runtime.position) <= 1;
       const cooldownExpired =
-        state.tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= 8;
+        state.tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= INTERACTION_COOLDOWN_TICKS;
 
       // Only trigger when physically adjacent — NPCs must have walked up to each other first.
       if (closeEnough && cooldownExpired) {
@@ -480,9 +504,15 @@ function findApproachTarget(state: DemoState, nextNpcs: NpcState[], tick: number
       if (dist <= 1) continue;
 
       const cooldownExpired =
-        tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= 8;
+        tick - Math.max(first.runtime.lastInteractionTick, second.runtime.lastInteractionTick) >= INTERACTION_COOLDOWN_TICKS;
 
       if (!cooldownExpired) continue;
+
+      // Don't redirect an NPC that recently finished a conversation — it should
+      // stay near its current partner long enough for a follow-up to trigger.
+      const firstRecentlyTalked = tick - first.runtime.lastInteractionTick < INTERACTION_COOLDOWN_TICKS;
+      const secondRecentlyTalked = tick - second.runtime.lastInteractionTick < INTERACTION_COOLDOWN_TICKS;
+      if (firstRecentlyTalked || secondRecentlyTalked) continue;
 
       // Direct the first NPC toward the second's current position.
       // The soft-block bypass in advanceDemoState lets the NPC reach distance=1,
@@ -992,6 +1022,44 @@ function chooseUnblockMove(
   }
 
   return null;
+}
+
+// Every WANDER_INTERVAL ticks an idle-in-zone NPC picks a random free adjacent
+// cell still inside the zone, so the map looks alive even when nobody is
+// approaching each other.
+const WANDER_INTERVAL = 4;
+
+function pickWanderCell(
+  npc: NpcState,
+  zone: WorldZone | undefined,
+  occupied: Set<string>,
+  tick: number,
+  npcIndex: number,
+): Position | null {
+  if (!zone) return null;
+  if ((tick + npcIndex) % WANDER_INTERVAL !== 0) return null;
+
+  const { x, y } = npc.runtime.position;
+  const seed = hashString(`${npc.profile.id}:${tick}`);
+
+  const candidates: Position[] = [];
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+    const nx = x + dx;
+    const ny = y + dy;
+    const inside =
+      nx >= zone.topLeft.x &&
+      nx <= zone.bottomRight.x &&
+      ny >= zone.topLeft.y &&
+      ny <= zone.bottomRight.y;
+    const key = positionKey({ x: nx, y: ny });
+
+    if (inside && !occupied.has(key)) {
+      candidates.push({ x: nx, y: ny });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  return candidates[seed % candidates.length];
 }
 
 function stepToward(current: Position, destination: Position): Position {

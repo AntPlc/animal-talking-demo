@@ -685,6 +685,12 @@
   color: #6d28d9;
 }
 
+.failedNote {
+  font-size: 0.75rem;
+  color: #b45309;
+  font-style: italic;
+}
+
 .overridePanel {
   border: 1px solid #dbe4ef;
   border-radius: 0.75rem;
