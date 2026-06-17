@@ -334,7 +334,7 @@ function SimulationView({
 
           <div className={`${styles.panelScroll} ${styles.historyList}`}>
             {conversations.length > 0 ? (
-              conversations.map((conversation) => (
+              [...conversations].reverse().map((conversation) => (
                 <ConversationCardCompact key={conversation.id} conversation={conversation} />
               ))
             ) : (
@@ -366,9 +366,10 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   );
 
   const npcPagination = usePagination(state.npcs);
-  const convPagination = usePagination(state.conversations);
-  const overridePagination = usePagination(state.recentOverrides);
   const reversedConversations = [...state.conversations].reverse();
+  const convPagination = usePagination(reversedConversations);
+  const reversedOverrides = [...state.recentOverrides].reverse();
+  const overridePagination = usePagination(reversedOverrides);
   const historyPagination = usePagination(reversedConversations, CONV_PAGE_SIZE);
 
   return (
@@ -522,7 +523,7 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
 }
 
 const PAGE_SIZE = 10;
-const CONV_PAGE_SIZE = 5;
+const CONV_PAGE_SIZE = 10;
 
 // Hook that slices an array into pages and exposes safe page navigation.
 // safePage clamps the current page index to prevent out-of-bound reads when the array shrinks.
