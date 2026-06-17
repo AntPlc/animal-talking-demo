@@ -728,6 +728,13 @@
   line-height: 1.4;
 }
 
+.updateRowTimestamp {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .updateRow .updateChip {
   flex-shrink: 0;
   margin-left: auto;

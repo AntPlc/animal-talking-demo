@@ -1,5 +1,10 @@
+// BFS-based grid pathfinder used by the simulation engine to move NPCs toward their destinations.
+// Hard-blocked cells (occupied by another NPC or the top row) are impassable.
+// Soft-blocked cells (adjacent to a non-conversation NPC) are skipped unless ignoreSoftBlock is set.
+
 import type { Position } from "./demo-state";
 
+// The four cardinal movement directions — no diagonal movement.
 const CARDINAL_DELTAS: readonly Position[] = [
   { x: -1, y: 0 },
   { x: 1, y: 0 },
@@ -7,18 +12,24 @@ const CARDINAL_DELTAS: readonly Position[] = [
   { x: 0, y: 1 },
 ];
 
+// Encodes a Position as a "x,y" string key for use in Sets and Maps.
 function positionKey(position: Position): string {
   return `${position.x},${position.y}`;
 }
 
+// Returns true if both positions refer to the same grid cell.
 function positionsEqual(first: Position, second: Position): boolean {
   return first.x === second.x && first.y === second.y;
 }
 
+// Returns true if the position falls within the playable grid area.
 function isInBounds(position: Position, gridWidth: number, gridHeight: number): boolean {
   return position.x >= 0 && position.x < gridWidth && position.y >= 0 && position.y < gridHeight;
 }
 
+// Returns true if an NPC may step onto the given position.
+// The goal cell itself is always walkable even if occupied (the NPC stops adjacent to it).
+// Soft blocks are only enforced when ignoreSoftBlock is false.
 function canWalkTo(
   position: Position,
   goal: Position,
@@ -46,6 +57,10 @@ function canWalkTo(
   return true;
 }
 
+// Breadth-first search from start to goal.
+// Returns the full path (start → goal) as an ordered list of positions,
+// or an empty array if no route exists. The cameFrom map is used to reconstruct
+// the path by walking backwards from the goal.
 function bfs(
   start: Position,
   goal: Position,
@@ -67,6 +82,7 @@ function bfs(
   }
 
   const queue: Position[] = [start];
+  // Maps each visited cell key to the key of the cell it was reached from.
   const cameFrom = new Map<string, string | null>([[startKey, null]]);
 
   while (queue.length > 0) {
@@ -98,6 +114,7 @@ function bfs(
     return [];
   }
 
+  // Reconstruct path by walking the cameFrom chain backwards from goal to start.
   const path: Position[] = [];
   let cursor: string | null = goalKey;
 
@@ -110,6 +127,10 @@ function bfs(
   return path;
 }
 
+// Entry point for pathfinding. Tries to reach the goal cell directly first.
+// If the goal is occupied (another NPC standing there), looks for the shortest
+// path to any of the four adjacent cells instead, so the approaching NPC stops
+// one step away — ready to trigger a conversation.
 export function findPathToGoal(
   start: Position,
   goal: Position,
@@ -128,6 +149,7 @@ export function findPathToGoal(
     }
   }
 
+  // Goal is occupied — find the nearest free adjacent cell.
   let bestPath: Position[] = [];
 
   for (const delta of CARDINAL_DELTAS) {
@@ -142,6 +164,8 @@ export function findPathToGoal(
   return bestPath;
 }
 
+// Returns the second cell in the path — the immediate next step the NPC should take.
+// Returns null if the path is empty or contains only the current position.
 export function nextPathStep(path: Position[]): Position | null {
   return path.length > 1 ? path[1] : null;
 }

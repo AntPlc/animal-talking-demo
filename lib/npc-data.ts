@@ -1,16 +1,30 @@
+// Static profiles for all hardcoded NPCs.
+// These are immutable character definitions — loaded once at startup and never mutated at runtime.
+// The runtime state (position, mood, relationships…) lives in NpcRuntimeState inside demo-state.ts.
+
+// Immutable descriptor for a single NPC character.
+// Everything here is authored content: name, role, personality, lore text, and portrait assets.
 export interface NpcProfile {
   id: string;
   name: string;
   role: string;
+  // Two-letter initials shown when the portrait image fails to load.
   monogram: string;
   portraitSrc: string;
   portraitAlt: string;
+  // Ordered list of personality adjectives used to generate conversational cues.
   personality: string[];
+  // High-level objectives that drive dialogue lines and post-conversation objective updates.
   goals: string[];
+  // The zone this NPC gravitates toward when idle; used for initial placement and objective defaults.
   preferredZoneId: string;
+  // Long-form background text displayed in the database view and referenced by the dialogue generator.
   lore: string;
 }
 
+// The eight characters that populate the demo world.
+// Each entry maps to a unique zone, set of personality traits, and lore text
+// used by the deterministic dialogue builder in demo-state.ts.
 export const NPC_PROFILES: NpcProfile[] = [
   {
     id: "npc_tom",

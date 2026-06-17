@@ -32,8 +32,8 @@ import {
   type OverrideEvent,
 } from "@/lib/demo-state";
 
-const STORAGE_KEY = "animal-talking-demo-state-v4";
-const STORAGE_VERSION = 4;
+const STORAGE_KEY = "animal-talking-demo-state-v5";
+const STORAGE_VERSION = 5;
 // Presence of this key in sessionStorage signals a normal reload (not hard refresh).
 // sessionStorage is cleared on Shift+F5 / Ctrl+Shift+R, preserved on F5.
 const SESSION_KEY = "animal-talking-session-v4";
@@ -49,16 +49,15 @@ const VIEW_LABELS: Record<DemoView, ViewLabel> = {
   simulation: {
     title: "Simulation view",
   },
-  history: {
-    title: "Conversation history",
-    description: "All generated exchanges, structured turns, and extracted updates.",
-  },
-  database: {
-    title: "NPC database",
-    description: "Runtime state for every hardcoded character in the demo.",
+  data: {
+    title: "Data",
+    description: "Runtime state, conversation history, and extracted updates for every character.",
   },
 };
 
+// Root client component for the Animal Talking demo.
+// Owns the simulation state, drives the tick loop, persists state to localStorage,
+// and orchestrates conversation timing (start → fake generation delay → finish).
 export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   const [state, setState] = useState<DemoState>(() => createInitialDemoState());
   const [pendingCandidate, setPendingCandidate] = useState<InteractionCandidate | null>(null);
@@ -66,7 +65,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<number | null>(null);
   const simulationStartRef = useRef(Date.now());
-  const hasHydratedStorageRef = useRef(false);
+
 
   useEffect(() => {
     // Detect hard refresh: sessionStorage has no marker → Shift+F5 or new tab.
@@ -76,26 +75,25 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
       sessionStorage.setItem(SESSION_KEY, "1");
     }
 
-    const saved = readSavedState();
-
-    if (saved) {
-      const normalized = normalizeSavedState(saved);
-      setState(isHardRefresh ? randomizeNpcPositions(normalized, Date.now()) : normalized);
-    } else if (isHardRefresh) {
+    if (isHardRefresh) {
       setState((current) => randomizeNpcPositions(current, Date.now()));
+    } else {
+      const saved = readSavedState();
+      if (saved) {
+        setState(normalizeSavedState(saved));
+      }
     }
 
-    hasHydratedStorageRef.current = true;
     setIsHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hasHydratedStorageRef.current) {
+    if (!isHydrated) {
       return;
     }
 
     writeSavedState(state);
-  }, [state]);
+  }, [isHydrated, state]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -223,11 +221,8 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
           <Link className={view === "simulation" ? styles.navActive : styles.navLink} href="/">
             Simulation
           </Link>
-          <Link className={view === "history" ? styles.navActive : styles.navLink} href="/history">
-            History
-          </Link>
-          <Link className={view === "database" ? styles.navActive : styles.navLink} href="/database">
-            Database
+          <Link className={view === "data" ? styles.navActive : styles.navLink} href="/data">
+            Data
           </Link>
         </nav>
       </header>
@@ -258,19 +253,13 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
             activeConversation={activeConversation}
           />
         )}
-        {view === "history" && (
-          <HistoryView
-            conversations={state.conversations}
-            npcs={state.npcs}
-            logs={state.logs}
-          />
-        )}
-        {view === "database" && <DatabaseView state={state} />}
+        {view === "data" && <DataView state={state} />}
       </div>
     </div>
   );
 }
 
+// Renders the grid map with zone overlays, NPC tokens, and the live conversation feed sidebar.
 function SimulationView({
   zones,
   npcs,
@@ -370,55 +359,9 @@ function SimulationView({
   );
 }
 
-function HistoryView({
-  conversations,
-  npcs,
-  logs,
-}: Readonly<{
-  conversations: DemoState["conversations"];
-  npcs: DemoState["npcs"];
-  logs: DemoState["logs"];
-}>) {
-  return (
-    <div className={styles.historyLayout}>
-      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Conversation history">
-        <div className={styles.panelHeader}>
-          <div>
-            <h2>Conversation history</h2>
-            <p>Full dialogue, extracted memories, relationship changes, mood shifts, and new objectives — all as returned by the LLM.</p>
-          </div>
-        </div>
-
-        <div className={styles.historyList}>
-          {conversations.length > 0 ? (
-            conversations.map((conversation) => (
-              <ConversationCard key={conversation.id} conversation={conversation} npcs={npcs} />
-            ))
-          ) : (
-            <p className={styles.placeholder}>No conversations yet. The simulation generates them automatically.</p>
-          )}
-        </div>
-      </section>
-
-      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Debug trail">
-        <div className={styles.panelHeader}>
-          <div>
-            <h2>Debug trail</h2>
-            <p>Useful for demo narration and verification.</p>
-          </div>
-        </div>
-
-        <ul className={styles.logList}>
-          {logs.map((log) => (
-            <li key={log}>{log}</li>
-          ))}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-function DatabaseView({ state }: Readonly<{ state: DemoState }>) {
+// Read-only view of the in-memory simulation state.
+// Shows NPC runtime rows, full conversation history, override events, system logs, and NPC cards.
+function DataView({ state }: Readonly<{ state: DemoState }>) {
   const completedConversations = state.conversations.filter((c) => c.status === "completed");
   const genTimes = completedConversations
     .filter((c) => c.startedAtMs && c.endedAtMs)
@@ -434,14 +377,13 @@ function DatabaseView({ state }: Readonly<{ state: DemoState }>) {
   const npcPagination = usePagination(state.npcs);
   const convPagination = usePagination(state.conversations);
   const overridePagination = usePagination(state.recentOverrides);
-  const logPagination = usePagination(state.logs);
 
   return (
-    <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="NPC database">
+    <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Data">
       <div className={styles.panelHeader}>
         <div>
-          <h2>NPC runtime database</h2>
-          <p>A read-only view of the in-memory simulation state.</p>
+          <h2>NPC runtime data</h2>
+          <p>A read-only view of the in-memory simulation state and all generated conversations.</p>
         </div>
       </div>
 
@@ -536,37 +478,38 @@ function DatabaseView({ state }: Readonly<{ state: DemoState }>) {
           </div>
         )}
 
-        <div className={styles.dbLogsRow}>
-          <section className={styles.overridePanel} aria-label="Override actions">
-            <div className={styles.tableSectionHeader}>
-              <div>
-                <h3>Override actions</h3>
-                <p>Blue = Classic engine, violet = LLM.</p>
-              </div>
-              <PaginationBar {...overridePagination} />
+        <div className={styles.tableSection}>
+          <div className={styles.tableSectionHeader}>
+            <div>
+              <h3>Conversation history</h3>
+              <p>Full dialogue, extracted memories, relationship changes, mood shifts, and new objectives.</p>
             </div>
-            <div className={styles.overrideList}>
-              {overridePagination.slice.map((event) => (
-                <OverrideEventRow key={event.id} event={event} />
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.overridePanel} aria-label="System logs">
-            <div className={styles.tableSectionHeader}>
-              <div>
-                <h3>System logs</h3>
-                <p>Generation results, state mutations, weather.</p>
-              </div>
-              <PaginationBar {...logPagination} />
-            </div>
-            <ul className={styles.logList}>
-              {logPagination.slice.map((log) => (
-                <li key={log}>{log}</li>
-              ))}
-            </ul>
-          </section>
+          </div>
+          <div className={styles.historyList}>
+            {state.conversations.length > 0 ? (
+              state.conversations.map((conversation) => (
+                <ConversationCard key={conversation.id} conversation={conversation} npcs={state.npcs} />
+              ))
+            ) : (
+              <p className={styles.placeholder}>No conversations yet. The simulation generates them automatically.</p>
+            )}
+          </div>
         </div>
+
+        <section className={styles.overridePanel} aria-label="Override actions">
+          <div className={styles.tableSectionHeader}>
+            <div>
+              <h3>Override actions</h3>
+              <p>Blue = Classic engine, violet = LLM.</p>
+            </div>
+            <PaginationBar {...overridePagination} />
+          </div>
+          <div className={styles.overrideList}>
+            {overridePagination.slice.map((event) => (
+              <OverrideEventRow key={event.id} event={event} />
+            ))}
+          </div>
+        </section>
 
         <div className={styles.databaseGrid}>
           {state.npcs.map((npc) => (
@@ -598,6 +541,8 @@ function DatabaseView({ state }: Readonly<{ state: DemoState }>) {
 
 const PAGE_SIZE = 10;
 
+// Hook that slices an array into pages of PAGE_SIZE items and exposes safe page navigation.
+// safePage clamps the current page index to prevent out-of-bound reads when the array shrinks.
 function usePagination<T>(items: T[]) {
   const [page, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
@@ -606,6 +551,8 @@ function usePagination<T>(items: T[]) {
   return { page: safePage, setPage, totalPages, slice };
 }
 
+// Renders previous / next page buttons. Returns null when there is only one page,
+// so callers never see an empty pagination row.
 function PaginationBar({
   page,
   totalPages,
@@ -635,6 +582,7 @@ function PaginationBar({
   );
 }
 
+// Small stat card displaying a text label and a bold value. Used in the top summary row.
 function SummaryCard({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
     <article className={styles.summaryCard}>
@@ -644,6 +592,8 @@ function SummaryCard({ label, value }: Readonly<{ label: string; value: string }
   );
 }
 
+// Renders an NPC's portrait image. Falls back to a monogram badge if the image
+// fails to load (e.g. missing asset in development).
 function NpcPortrait({
   profile,
   className,
@@ -669,6 +619,10 @@ function NpcPortrait({
   );
 }
 
+// Absolutely-positioned overlay token placed on the grid at the NPC's current cell.
+// Shows the portrait, name label, a speech bubble when chatting, and visual indicators
+// for active / blocked / moving states. Position is expressed as percentages so it
+// scales with any grid size.
 function NpcToken({
   npc,
   active,
@@ -719,6 +673,8 @@ function NpcToken({
   );
 }
 
+// Compact conversation card shown in the simulation sidebar feed.
+// Displays participants, zone, status badge, summary, and LLM update count.
 function ConversationCardCompact({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   const llmCount = conversation.updates.filter((u) => u.source === "LLM_PACKAGE").length;
   return (
@@ -741,6 +697,8 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
   );
 }
 
+// Formats a single CharacterUpdate into a { label, detail, isLlm } triple for the history view.
+// Resolves participant names from IDs and humanises each update type for display.
 function formatUpdateDetail(
   update: CharacterUpdate,
   participantIds: [string, string],
@@ -772,6 +730,9 @@ function formatUpdateDetail(
   }
 }
 
+// Expanded conversation card used in the history view.
+// Shows the full dialogue transcript followed by two grouped update sections:
+// one for LLM-sourced extractions and one for classic-engine updates.
 function ConversationCard({
   conversation,
   npcs,
@@ -823,6 +784,7 @@ function ConversationCard({
                 <div key={`llm-${i}`} className={styles.updateRow}>
                   <span className={styles.updateRowLabel}>{label}</span>
                   <span className={styles.updateRowDetail}>{detail}</span>
+                  <span className={styles.updateRowTimestamp}>{update.timestamp}</span>
                   <span className={`${styles.updateChip} ${styles.updateChipLlm}`}>LLM</span>
                 </div>
               );
@@ -846,6 +808,7 @@ function ConversationCard({
                 <div key={`classic-${i}`} className={styles.updateRow}>
                   <span className={styles.updateRowLabel}>{label}</span>
                   <span className={styles.updateRowDetail}>{detail}</span>
+                  <span className={styles.updateRowTimestamp}>{update.timestamp}</span>
                   <span className={`${styles.updateChip} ${styles.updateChipClassic}`}>Classic</span>
                 </div>
               );
@@ -857,6 +820,8 @@ function ConversationCard({
   );
 }
 
+// Reads and parses the versioned demo state from localStorage.
+// Returns null on a missing key, a JSON parse error, or a version mismatch.
 function readSavedState(): DemoState | null {
   if (typeof window === "undefined") {
     return null;
@@ -886,6 +851,8 @@ function readSavedState(): DemoState | null {
   }
 }
 
+// Serialises the current state together with STORAGE_VERSION into localStorage
+// so that future loads can detect and reject stale schemas.
 function writeSavedState(state: DemoState) {
   if (typeof window === "undefined") {
     return;
@@ -900,6 +867,10 @@ function writeSavedState(state: DemoState) {
   );
 }
 
+// Sanitises a state loaded from localStorage before it enters the simulation.
+// Re-hydrates all NPC profiles with the latest static data, fills in missing fields
+// (e.g. secondField added in a newer version), and marks any in-progress conversation
+// as "failed" (it was interrupted by a page reload and cannot be resumed).
 function normalizeSavedState(state: DemoState): DemoState {
   const baseState = reconcileConversationRuntime(
     {
@@ -935,12 +906,13 @@ function normalizeSavedState(state: DemoState): DemoState {
           endedAt: completedAt,
         };
       }),
-      logs: [`Recovered from interrupted conversation ${state.activeConversationId}.`, ...state.logs].slice(0, 20),
     },
     { stampCooldownOnRelease: true },
   );
 }
 
+// Type guard that verifies the persisted object has the correct schema version
+// and a valid state property before the app attempts to restore it.
 function isSavedDemoState(
   value: DemoState | { version?: number; state?: DemoState },
 ): value is { version: number; state: DemoState } {
@@ -955,6 +927,7 @@ function isSavedDemoState(
   );
 }
 
+// Formats a millisecond duration as a zero-padded "MM:SS" string for the elapsed timer.
 function formatElapsed(valueMs: number): string {
   const totalSeconds = Math.floor(valueMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -962,6 +935,7 @@ function formatElapsed(valueMs: number): string {
   return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
+// Maps a weather state to a Unicode icon displayed next to the weather label.
 function weatherIcon(weather: DemoState["weather"]): string {
   switch (weather) {
     case "SUNNY":
@@ -975,6 +949,8 @@ function weatherIcon(weather: DemoState["weather"]): string {
   }
 }
 
+// Renders a single override event row with colour-coding by source:
+// blue for Classic engine events, violet for LLM package events.
 function OverrideEventRow({ event }: Readonly<{ event: OverrideEvent }>) {
   return (
     <article

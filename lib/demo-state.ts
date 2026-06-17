@@ -5,7 +5,7 @@ import { findPathToGoal, nextPathStep } from "./pathfinder";
 
 export type { NpcProfile } from "./npc-data";
 
-export type DemoView = "simulation" | "history" | "database";
+export type DemoView = "simulation" | "data";
 
 export type Weather = "SUNNY" | "CLOUDY" | "RAINY" | "STORMY";
 
@@ -85,6 +85,7 @@ export type CharacterUpdate =
       mood: NpcMood;
       note: string;
       source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
     }
   | {
       type: "UPDATE_OBJECTIVE";
@@ -92,6 +93,7 @@ export type CharacterUpdate =
       objective: NpcObjective;
       note: string;
       source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
     }
   | {
       type: "ADD_MEMORY";
@@ -99,6 +101,7 @@ export type CharacterUpdate =
       memory: string;
       note: string;
       source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
     }
   | {
       type: "UPDATE_RELATIONSHIP";
@@ -107,6 +110,7 @@ export type CharacterUpdate =
       relationship: RelationshipType;
       note: string;
       source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
     };
 
 export interface OverrideEvent {
@@ -144,7 +148,6 @@ export interface DemoState {
   conversations: ConversationRecord[];
   recentOverrides: OverrideEvent[];
   activeConversationId: string | null;
-  logs: string[];
 }
 
 export interface InteractionCandidate {
@@ -287,6 +290,9 @@ export function randomizeNpcPositions(state: DemoState, seed: number): DemoState
   return { ...state, npcs };
 }
 
+// Builds the canonical starting DemoState: 8 NPCs with all relationships set to
+// STRANGER, default role-based objectives, and two seed memories each.
+// Uses a fixed seed (42) for NPC placement so server and client render the same layout on SSR.
 export function createInitialDemoState(): DemoState {
   const npcs = NPC_PROFILES.map((profile) => {
     const relationships: Record<string, RelationshipType> = {};
@@ -309,18 +315,12 @@ export function createInitialDemoState(): DemoState {
           type: "IDLE",
           label: "Take a quiet moment",
         },
-        shortHistory: [
-          `Started the day in ${profile.preferredZoneId}.`,
-          `Current goal: ${profile.goals[0]}.`,
-        ],
+        shortHistory: [],
         lastInteractionTick: -100,
         blockedTicks: 0,
       },
       relationships,
-      memories: [
-        `Lives a quiet routine around the ${profile.preferredZoneId}.`,
-        `Known for being ${profile.personality[0]}.`,
-      ],
+      memories: [],
     };
   });
 
@@ -333,16 +333,15 @@ export function createInitialDemoState(): DemoState {
     conversations: [],
     recentOverrides: [],
     activeConversationId: null,
-    logs: [
-      "Demo initialized with 8 hardcoded NPCs.",
-      "No LLM needed yet: the fake provider can already generate structured dialogue.",
-    ],
   };
 
   // Use a fixed seed so server and client render identical initial positions.
   return randomizeNpcPositions(baseState, 42);
 }
 
+// Moves every NPC currently frozen in "in_conversation" back to "idle".
+// When stampCooldown is true, records the current tick as their last interaction
+// so the cooldown timer starts from now rather than from whenever the conversation began.
 function releaseInConversationNpcs(
   npcs: NpcState[],
   tick: number,
@@ -383,7 +382,6 @@ export function reconcileConversationRuntime(
     return {
       ...state,
       npcs: releaseInConversationNpcs(state.npcs, state.tick, stampCooldown),
-      logs: ["Released NPCs stuck in conversation without an active session.", ...state.logs].slice(0, 20),
     };
   }
 
@@ -396,10 +394,11 @@ export function reconcileConversationRuntime(
     ...state,
     activeConversationId: null,
     npcs: releaseInConversationNpcs(state.npcs, state.tick, stampCooldown),
-    logs: [`Cleared orphaned conversation pointer ${activeId}.`, ...state.logs].slice(0, 20),
   };
 }
 
+// Extracts the minimal InteractionCandidate descriptor from an existing ConversationRecord.
+// Used after a page restore to re-attach the generation timer to an interrupted conversation.
 export function interactionCandidateFromConversation(
   conversation: ConversationRecord,
 ): InteractionCandidate {
@@ -410,6 +409,10 @@ export function interactionCandidateFromConversation(
   };
 }
 
+// Produces the next DemoState from the current one.
+// Advances tick, world time, and weather, then moves every non-frozen NPC one cell
+// toward its current destination (or wanders it within its zone if no destination is set).
+// Also calls findApproachTarget to direct pairs of same-zone NPCs toward each other.
 export function advanceDemoState(rawState: DemoState): DemoState {
   const state = reconcileConversationRuntime(rawState);
 
@@ -574,14 +577,6 @@ export function advanceDemoState(rawState: DemoState): DemoState {
     });
   }
 
-  const weatherChanged = nextWeather !== state.weather;
-  const logs = weatherChanged
-    ? [
-        ...state.logs,
-        `[Tick ${nextTick}] Weather changed → ${nextWeather.toLowerCase()}.`,
-      ].slice(-40)
-    : state.logs;
-
   return {
     ...state,
     tick: nextTick,
@@ -590,10 +585,12 @@ export function advanceDemoState(rawState: DemoState): DemoState {
     npcs: state.activeConversationId
       ? nextNpcs
       : findApproachTarget(state, nextNpcs, nextTick),
-    logs,
   };
 }
 
+// Scans all free NPC pairs for two that are physically adjacent (distance ≤ 1)
+// and whose interaction cooldown has expired. Returns the first match as an
+// InteractionCandidate, or null if no pair qualifies.
 export function findInteractionCandidate(state: DemoState): InteractionCandidate | null {
   const available = state.npcs.filter((npc) => npc.runtime.status !== "in_conversation");
 
@@ -670,6 +667,8 @@ function findApproachTarget(state: DemoState, nextNpcs: NpcState[], tick: number
   return nextNpcs;
 }
 
+// Hardcoded demo trigger: forces Tom (npc_tom) and Quinn (npc_quentin) into a
+// conversation regardless of their positions or cooldown state. Used for scripted demos.
 export function createScriptedInteraction(state: DemoState, reason: InteractionReason): InteractionCandidate | null {
   const first = state.npcs.find((npc) => npc.profile.id === "npc_tom");
   const second = state.npcs.find((npc) => npc.profile.id === "npc_quentin");
@@ -685,6 +684,8 @@ export function createScriptedInteraction(state: DemoState, reason: InteractionR
   };
 }
 
+// Opens a new conversation: creates a "generating" ConversationRecord, sets both
+// participant NPCs to "in_conversation" status, and stores the conversation ID as active.
 export function startInteraction(state: DemoState, candidate: InteractionCandidate): DemoState {
   const [firstId, secondId] = candidate.participantIds;
   const first = getNpcById(state, firstId);
@@ -732,6 +733,9 @@ export function startInteraction(state: DemoState, candidate: InteractionCandida
   };
 }
 
+// Completes the active conversation: generates dialogue via buildConversation,
+// stamps the record as "completed", applies all character updates to the NPC states,
+// and appends a summary log line with timing and LLM update counts.
 export function finishInteraction(
   state: DemoState,
   candidate: InteractionCandidate,
@@ -748,14 +752,10 @@ export function finishInteraction(
     return reconcileConversationRuntime(state);
   }
 
-  const dialogue = buildConversation(first, second, state, candidate);
-  const completedAt = toIsoTimestamp(state.worldTime);
   const endedAtMs = Date.now();
-  const activeRecord = state.conversations.find((c) => c.id === state.activeConversationId);
-  const genTimeMs = activeRecord?.startedAtMs ? endedAtMs - activeRecord.startedAtMs : null;
-  const genTimeSec = genTimeMs !== null ? (genTimeMs / 1000).toFixed(1) : "?";
-  const zoneName = candidate.zoneId ?? "unknown zone";
-  const llmUpdateCount = dialogue.updates.filter((u) => u.source === "LLM_PACKAGE").length;
+  const wallTime = formatTimestamp(new Date(endedAtMs));
+  const dialogue = buildConversation(first, second, state, candidate, wallTime);
+  const completedAt = toIsoTimestamp(state.worldTime);
 
   return {
     ...state,
@@ -778,19 +778,18 @@ export function finishInteraction(
     }),
     npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
     recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
-    logs: [
-      `[CONV] ${first.profile.name} + ${second.profile.name} @ ${zoneName} — ${dialogue.turns.length} turns | gen: ${genTimeSec}s | ${llmUpdateCount} LLM updates`,
-      ...dialogue.updates.map((u) => `  [${u.source === "LLM_PACKAGE" ? "LLM" : "Engine"}] ${u.note}`),
-      ...state.logs,
-    ].slice(0, 60),
   };
 }
 
+// Deterministically generates four dialogue turns and all associated CharacterUpdates
+// for a pair of NPCs. The fake "LLM" provider picks lines from per-character template
+// pools selected by a hashed seed (same inputs → same output, no real LLM call).
 export function buildConversation(
   first: NpcState,
   second: NpcState,
   state: DemoState,
   candidate: InteractionCandidate,
+  wallTime: string,
 ): {
   turns: DialogueTurn[];
   updates: CharacterUpdate[];
@@ -814,6 +813,7 @@ export function buildConversation(
   ];
 
   const now = toIsoTimestamp(state.worldTime);
+  const ts = wallTime;
 
   const turns: DialogueTurn[] = lines.map((line, index) => {
     const [speakerName, message] = line.split(": ", 2);
@@ -841,6 +841,7 @@ export function buildConversation(
       mood: firstMood,
       note: `${first.profile.name}: mood → ${firstMood}`,
       source: "LLM_PACKAGE",
+      timestamp: ts,
     },
     {
       type: "UPDATE_MOOD",
@@ -848,6 +849,7 @@ export function buildConversation(
       mood: secondMood,
       note: `${second.profile.name}: mood → ${secondMood}`,
       source: "LLM_PACKAGE",
+      timestamp: ts,
     },
     {
       type: "ADD_MEMORY",
@@ -855,6 +857,7 @@ export function buildConversation(
       memory: firstMemory,
       note: `${first.profile.name}: memory → "${firstMemory}"`,
       source: "LLM_PACKAGE",
+      timestamp: ts,
     },
     {
       type: "ADD_MEMORY",
@@ -862,6 +865,7 @@ export function buildConversation(
       memory: secondMemory,
       note: `${second.profile.name}: memory → "${secondMemory}"`,
       source: "LLM_PACKAGE",
+      timestamp: ts,
     },
     {
       type: "UPDATE_RELATIONSHIP",
@@ -870,6 +874,7 @@ export function buildConversation(
       relationship: firstRelationship,
       note: `${first.profile.name} → ${second.profile.name}: relation → ${firstRelationship}`,
       source: "CLASSIC_ENGINE",
+      timestamp: ts,
     },
     {
       type: "UPDATE_RELATIONSHIP",
@@ -878,6 +883,7 @@ export function buildConversation(
       relationship: secondRelationship,
       note: `${second.profile.name} → ${first.profile.name}: relation → ${secondRelationship}`,
       source: "CLASSIC_ENGINE",
+      timestamp: ts,
     },
     {
       type: "UPDATE_OBJECTIVE",
@@ -885,6 +891,7 @@ export function buildConversation(
       objective: firstObjective,
       note: `${first.profile.name}: goal → ${firstObjective.label}`,
       source: "CLASSIC_ENGINE",
+      timestamp: ts,
     },
     {
       type: "UPDATE_OBJECTIVE",
@@ -892,6 +899,7 @@ export function buildConversation(
       objective: secondObjective,
       note: `${second.profile.name}: goal → ${secondObjective.label}`,
       source: "CLASSIC_ENGINE",
+      timestamp: ts,
     },
   ];
 
@@ -902,6 +910,9 @@ export function buildConversation(
   };
 }
 
+// Applies a batch of CharacterUpdates (mood, objective, memory, relationship) to the
+// matching NPCs and returns the updated array. NPCs not referenced by any update are
+// returned unchanged. Also releases any NPC still marked in_conversation.
 export function applyConversationUpdates(
   npcs: NpcState[],
   updates: CharacterUpdate[],
@@ -1012,6 +1023,8 @@ export function isPositionInsideZone(position: Position, zone: WorldZone): boole
   );
 }
 
+// Returns the center cell of a zone, used as the pathfinding target when an NPC
+// needs to navigate toward that zone.
 export function zoneCenter(zone: WorldZone): Position {
   return {
     x: Math.floor((zone.topLeft.x + zone.bottomRight.x) / 2),
@@ -1031,6 +1044,9 @@ export function getDemoProfiles(): NpcProfile[] {
   return NPC_PROFILES;
 }
 
+// Merges a persisted NPC snapshot with the latest static profile from NPC_PROFILES.
+// Prevents stale lore, goal text, or missing fields from a previous localStorage version
+// from carrying over into the running simulation.
 export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   const profile = NPC_PROFILES.find((entry) => entry.id === savedNpc.profile.id) ?? savedNpc.profile;
   const seedMemories = [
@@ -1059,6 +1075,8 @@ export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   };
 }
 
+// Returns the center of the NPC's target zone as a pathfinding destination.
+// Returns null if the NPC is already in the target zone or has no GO_TO_LOCATION objective.
 function resolveObjectiveDestination(
   npc: NpcState,
   zones: WorldZone[],
@@ -1082,6 +1100,9 @@ function resolveObjectiveDestination(
   return zoneCenter(targetZone);
 }
 
+// Determines the zone ID the NPC is currently heading toward, used to display
+// the target zone indicator in the UI. Prefers the NPC's own objective zone;
+// falls back to whichever zone contains the explicit destination cell.
 function resolveTargetZoneId(
   npc: NpcState,
   explicitDestination: Position | null,
@@ -1099,6 +1120,10 @@ function resolveTargetZoneId(
   return null;
 }
 
+// Returns true when the NPC has "arrived" at its destination.
+// For explicit destinations (approaching another NPC): adjacency (distance ≤ 1) counts as arrival
+// when the cell is occupied, exact match otherwise.
+// For zone objectives: arrival is confirmed when the NPC steps inside the target zone.
 function hasReachedDestination(
   position: Position,
   destination: Position,
@@ -1252,6 +1277,8 @@ function distance(first: Position, second: Position): number {
   return Math.abs(first.x - second.x) + Math.abs(first.y - second.y);
 }
 
+// Advances the in-world clock by a fixed number of seconds, correctly wrapping
+// seconds → minutes → hours → days.
 function advanceWorldTime(time: WorldTime, seconds: number): WorldTime {
   const totalSeconds =
     time.day * 24 * 60 * 60 + time.hour * 60 * 60 + time.minute * 60 + time.second + seconds;
@@ -1279,6 +1306,8 @@ export function formatWeather(weather: Weather): string {
   }
 }
 
+// Converts a WorldTime into an ISO 8601 string anchored on a hardcoded date.
+// Used as the createdAt / startedAt / endedAt value in conversation records.
 function toIsoTimestamp(time: WorldTime): string {
   const day = time.day.toString().padStart(2, "0");
   const hour = time.hour.toString().padStart(2, "0");
@@ -1288,10 +1317,25 @@ function toIsoTimestamp(time: WorldTime): string {
   return `2026-06-${day}T${hour}:${minute}:${second}.000Z`;
 }
 
+// Formats a real wall-clock Date as DDMMYY:HHMMSS (e.g. 170626:155800).
+export function formatTimestamp(date: Date): string {
+  const dd = date.getDate().toString().padStart(2, "0");
+  const mm = (date.getMonth() + 1).toString().padStart(2, "0");
+  const yy = date.getFullYear().toString().slice(-2);
+  const hh = date.getHours().toString().padStart(2, "0");
+  const min = date.getMinutes().toString().padStart(2, "0");
+  const ss = date.getSeconds().toString().padStart(2, "0");
+  return `${dd}${mm}${yy}:${hh}${min}${ss}`;
+}
+
+// Deterministically picks one entry from a template array using a string-hashed seed.
+// Same seed → same pick every time, making dialogue fully reproducible.
 function pickTemplate<T>(seed: string, templates: T[]): T {
   return templates[hashString(seed) % templates.length];
 }
 
+// Simple polynomial rolling hash (djb2-like) producing a stable 32-bit unsigned integer.
+// Used exclusively for deterministic template selection — not suitable for cryptographic use.
 function hashString(value: string): number {
   let hash = 0;
 
@@ -1302,6 +1346,8 @@ function hashString(value: string): number {
   return hash;
 }
 
+// Translates a raw personality trait adjective (e.g. "observant") into a first-person
+// conversational phrase (e.g. "noticing the details") for use inside dialogue lines.
 function personalityCue(profile: NpcProfile): string {
   const cue = profile.personality[hashString(profile.id) % profile.personality.length];
 
@@ -1369,6 +1415,8 @@ function personalityCue(profile: NpcProfile): string {
   }
 }
 
+// Generates the first line of the conversation (speaker = first NPC).
+// Delegates to a per-character template pool and picks deterministically via seed.
 function openingLine(
   first: NpcState,
   second: NpcState,
@@ -1382,6 +1430,7 @@ function openingLine(
   return pickTemplate(seed, templates);
 }
 
+// Generates the second line of the conversation (speaker = second NPC replying).
 function responseLine(
   speaker: NpcState,
   other: NpcState,
@@ -1393,6 +1442,8 @@ function responseLine(
   return pickTemplate(seed, templates);
 }
 
+// Generates the third line of the conversation (first NPC follows up).
+// Takes the time of day (morning/afternoon hint) and current zone into account.
 function followUpLine(
   speaker: NpcState,
   other: NpcState,
@@ -1406,6 +1457,8 @@ function followUpLine(
   return pickTemplate(seed, templates);
 }
 
+// Generates the fourth and final line of the conversation (second NPC wraps up).
+// References both NPCs' next objectives to tie the dialogue back to their goals.
 function closingLine(
   speaker: NpcState,
   other: NpcState,
@@ -1419,6 +1472,8 @@ function closingLine(
   return pickTemplate(seed, templates);
 }
 
+// Returns the pool of opening-line templates for the given speaker.
+// Each NPC has unique character-specific lines; all others fall back to defaultOpeningTemplates.
 function openingTemplatesFor(
   speaker: NpcState,
   other: NpcState,
@@ -1478,6 +1533,7 @@ function openingTemplatesFor(
   }
 }
 
+// Returns the pool of response-line templates for the given speaker.
 function responseTemplatesFor(
   speaker: NpcState,
   other: NpcState,
@@ -1523,6 +1579,7 @@ function responseTemplatesFor(
   }
 }
 
+// Returns the pool of follow-up-line templates for the given speaker.
 function followUpTemplatesFor(
   speaker: NpcState,
   other: NpcState,
@@ -1559,6 +1616,7 @@ function followUpTemplatesFor(
   }
 }
 
+// Returns the pool of closing-line templates for the given speaker.
 function closingTemplatesFor(
   speaker: NpcState,
   other: NpcState,
@@ -1598,6 +1656,7 @@ function closingTemplatesFor(
   }
 }
 
+// Generic opening-line templates used for any NPC that doesn't have dedicated lines.
 function defaultOpeningTemplates(
   speaker: NpcState,
   other: NpcState,
@@ -1615,6 +1674,9 @@ function defaultOpeningTemplates(
   ];
 }
 
+// Derives an NPC mood from weather conditions and the current in-world hour.
+// Stormy weather always produces BUSY; early/late hours produce CALM.
+// Musician and scout roles skew EXCITED; librarian skews BUSY.
 function moodFromContext(role: string, weather: Weather, hour: number): NpcMood {
   if (weather === "STORMY") {
     return "BUSY";
@@ -1635,6 +1697,8 @@ function moodFromContext(role: string, weather: Weather, hour: number): NpcMood 
   return "CURIOUS";
 }
 
+// Picks the post-conversation objective for an NPC.
+// Prefers the zone where the conversation happened; falls back to the NPC's role default.
 function objectiveForConversation(
   npc: NpcState,
   state: DemoState,
@@ -1659,6 +1723,9 @@ function objectiveForConversation(
   };
 }
 
+// Determines the relationship to assign after a conversation ends.
+// SAME_ZONE meetings always promote to FRIEND; otherwise existing relationships are preserved
+// (strangers become friends, non-strangers keep their current status).
 function relationAfterConversation(
   source: NpcState,
   target: NpcState,
@@ -1677,6 +1744,8 @@ function relationAfterConversation(
     : source.relationships[target.profile.id];
 }
 
+// Converts the CharacterUpdates from a finished conversation into OverrideEvent records
+// and prepends them to the recent overrides list (capped at 40 entries) for the debug UI.
 function registerOverrideEvents(
   existing: OverrideEvent[],
   updates: CharacterUpdate[],
