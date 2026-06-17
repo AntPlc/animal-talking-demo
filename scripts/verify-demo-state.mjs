@@ -14,23 +14,15 @@ const npcSource = ts.createSourceFile(npcDataPath, npcSourceText, ts.ScriptTarge
 const demoSource = ts.createSourceFile(demoStatePath, demoSourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
 const npcIds = readObjectIds(npcSource, "NPC_PROFILES");
-const initialPositionIds = readObjectKeys(demoSource, "INITIAL_POSITIONS");
+const objectiveRoles = readObjectKeys(demoSource, "OBJECTIVE_BY_ROLE");
 
-const missingPositions = npcIds.filter((id) => !initialPositionIds.includes(id));
-const extraPositions = initialPositionIds.filter((id) => !npcIds.includes(id));
+// Every NPC role should have a matching objective entry (or fall back to IDLE).
+// This is a soft check — warn but don't fail.
+const npcRoles = readNpcRoles(npcSource, "NPC_PROFILES");
+const missingObjectives = npcRoles.filter((role) => !objectiveRoles.includes(role));
 
-if (missingPositions.length > 0 || extraPositions.length > 0) {
-  const problems = [];
-
-  if (missingPositions.length > 0) {
-    problems.push(`missing positions for: ${missingPositions.join(", ")}`);
-  }
-
-  if (extraPositions.length > 0) {
-    problems.push(`extra positions for: ${extraPositions.join(", ")}`);
-  }
-
-  throw new Error(`NPC seed mismatch: ${problems.join("; ")}`);
+if (missingObjectives.length > 0) {
+  console.warn(`Warning: no OBJECTIVE_BY_ROLE entry for roles: ${missingObjectives.join(", ")} (will use IDLE fallback)`);
 }
 
 console.log(`NPC seed check passed for ${npcIds.length} characters.`);
@@ -65,6 +57,34 @@ function readObjectIds(sourceFile, variableName) {
     }
 
     return initializer.text;
+  });
+}
+
+function readNpcRoles(sourceFile, variableName) {
+  const arrayLiteral = unwrapExpression(getVariableInitializer(sourceFile, variableName));
+
+  if (!arrayLiteral || !ts.isArrayLiteralExpression(arrayLiteral)) {
+    throw new Error(`Could not find array initializer for ${variableName}.`);
+  }
+
+  return arrayLiteral.elements.flatMap((element, index) => {
+    if (!ts.isObjectLiteralExpression(element)) {
+      return [];
+    }
+
+    const roleProp = element.properties.find(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text === "role",
+    );
+
+    if (!roleProp || !ts.isPropertyAssignment(roleProp)) {
+      return [];
+    }
+
+    const init = roleProp.initializer;
+    return ts.isStringLiteral(init) ? [init.text] : [];
   });
 }
 

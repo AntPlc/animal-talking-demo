@@ -131,6 +131,8 @@ export interface ConversationRecord {
   summary: string;
   startedAt: string;
   endedAt?: string;
+  startedAtMs?: number;
+  endedAtMs?: number;
 }
 
 export interface DemoState {
@@ -154,13 +156,15 @@ export interface InteractionCandidate {
 
 const GRID_WIDTH = 12;
 const GRID_HEIGHT = 8;
+// Top row is reserved — NPCs cannot walk there so speech bubbles are never clipped.
+const BLOCKED_ROW_TOP = 0;
 // Minimum ticks between two NPCs interacting (or being directed toward each other).
 // At TICK_INTERVAL_MS=1800 this equals ~7.2 s — short enough to allow chaining,
 // long enough to prevent instant re-trigger.
 const INTERACTION_COOLDOWN_TICKS = 4;
 
-const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "SUNNY", "STORMY"];
-const WEATHER_CHANGE_INTERVAL_TICKS = 6;
+const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "STORMY"];
+const WEATHER_CHANGE_INTERVAL_TICKS = 30;
 
 const BASE_ZONES: WorldZone[] = [
   {
@@ -194,17 +198,6 @@ const BASE_ZONES: WorldZone[] = [
     bottomRight: { x: 11, y: 7 },
   },
 ];
-
-const INITIAL_POSITIONS = {
-  npc_tom: { x: 9, y: 1 },
-  npc_ben: { x: 2, y: 5 },
-  npc_celia: { x: 1, y: 1 },
-  npc_henri: { x: 6, y: 1 },
-  npc_rosie: { x: 5, y: 0 },
-  npc_jeff: { x: 8, y: 6 },
-  npc_antoine: { x: 10, y: 0 },
-  npc_quentin: { x: 3, y: 4 },
-} satisfies Record<NpcProfile["id"], Position>;
 
 const OBJECTIVE_BY_ROLE: Record<string, NpcObjective> = {
   curator: { type: "GO_TO_LOCATION", targetZoneId: "library", label: "Review the archive" },
@@ -242,14 +235,25 @@ function pickRandomFreeCell(
       x: zone.topLeft.x + (idx % xs),
       y: zone.topLeft.y + Math.floor(idx / xs),
     };
+    if (pos.y <= BLOCKED_ROW_TOP) continue;
     const key = positionKey(pos);
     if (!occupied.has(key)) {
       return pos;
     }
   }
 
-  // Fallback: zone is full, return top-left (shouldn't happen with 8 NPCs).
-  return zone.topLeft;
+  // Zone is full — scan the entire walkable grid for any free cell.
+  for (let y = BLOCKED_ROW_TOP + 1; y < GRID_HEIGHT; y += 1) {
+    for (let x = 0; x < GRID_WIDTH; x += 1) {
+      const pos: Position = { x, y };
+      if (!occupied.has(positionKey(pos))) {
+        return pos;
+      }
+    }
+  }
+
+  // Grid is completely full (should never happen with 8 NPCs on a 12×8 grid).
+  return { x: 0, y: BLOCKED_ROW_TOP + 1 };
 }
 
 // Place every NPC at a random free cell within their preferred zone.
@@ -257,6 +261,10 @@ function pickRandomFreeCell(
 export function randomizeNpcPositions(state: DemoState, seed: number): DemoState {
   const rand = lcg(seed);
   const occupied = new Set<string>();
+
+  for (let x = 0; x < GRID_WIDTH; x += 1) {
+    occupied.add(positionKey({ x, y: BLOCKED_ROW_TOP }));
+  }
 
   const npcs = state.npcs.map((npc) => {
     const zone =
@@ -292,7 +300,7 @@ export function createInitialDemoState(): DemoState {
     return {
       profile,
       runtime: {
-        position: getInitialPosition(profile.id),
+        position: { x: 0, y: 1 },
         destination: null,
         targetZoneId: null,
         status: "idle" as const,
@@ -316,7 +324,7 @@ export function createInitialDemoState(): DemoState {
     };
   });
 
-  return {
+  const baseState: DemoState = {
     tick: 0,
     worldTime: { day: 1, hour: 9, minute: 0, second: 0 },
     weather: "SUNNY",
@@ -330,27 +338,92 @@ export function createInitialDemoState(): DemoState {
       "No LLM needed yet: the fake provider can already generate structured dialogue.",
     ],
   };
+
+  // Use a fixed seed so server and client render identical initial positions.
+  return randomizeNpcPositions(baseState, 42);
 }
 
-function getInitialPosition(profileId: NpcProfile["id"]): Position {
-  if (!isNpcProfileId(profileId)) {
-    throw new Error(`Missing initial position for NPC ${profileId}.`);
+function releaseInConversationNpcs(
+  npcs: NpcState[],
+  tick: number,
+  stampCooldown: boolean,
+): NpcState[] {
+  return npcs.map((npc) => {
+    if (npc.runtime.status !== "in_conversation") {
+      return npc;
+    }
+
+    return {
+      ...npc,
+      runtime: {
+        ...npc.runtime,
+        status: "idle" as const,
+        destination: null,
+        ...(stampCooldown ? { lastInteractionTick: tick } : {}),
+      },
+    };
+  });
+}
+
+// Heal inconsistent runtime state: NPCs frozen in_conversation without an
+// active generating session, or an orphaned activeConversationId pointer.
+export function reconcileConversationRuntime(
+  state: DemoState,
+  options?: { stampCooldownOnRelease?: boolean },
+): DemoState {
+  const stampCooldown = options?.stampCooldownOnRelease ?? false;
+  const activeId = state.activeConversationId;
+
+  if (!activeId) {
+    const hasStuckNpcs = state.npcs.some((npc) => npc.runtime.status === "in_conversation");
+    if (!hasStuckNpcs) {
+      return state;
+    }
+
+    return {
+      ...state,
+      npcs: releaseInConversationNpcs(state.npcs, state.tick, stampCooldown),
+      logs: ["Released NPCs stuck in conversation without an active session.", ...state.logs].slice(0, 20),
+    };
   }
 
-  return INITIAL_POSITIONS[profileId];
+  const activeConversation = state.conversations.find((conversation) => conversation.id === activeId);
+  if (activeConversation?.status === "generating") {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeConversationId: null,
+    npcs: releaseInConversationNpcs(state.npcs, state.tick, stampCooldown),
+    logs: [`Cleared orphaned conversation pointer ${activeId}.`, ...state.logs].slice(0, 20),
+  };
 }
 
-function isNpcProfileId(profileId: string): profileId is keyof typeof INITIAL_POSITIONS {
-  return profileId in INITIAL_POSITIONS;
+export function interactionCandidateFromConversation(
+  conversation: ConversationRecord,
+): InteractionCandidate {
+  return {
+    participantIds: conversation.participantIds,
+    reason: conversation.reason,
+    zoneId: conversation.zoneId,
+  };
 }
 
-export function advanceDemoState(state: DemoState): DemoState {
+export function advanceDemoState(rawState: DemoState): DemoState {
+  const state = reconcileConversationRuntime(rawState);
+
   const nextTick = state.tick + 1;
-  const nextWorldTime = advanceWorldTime(state.worldTime, 10);
+  const nextWorldTime = advanceWorldTime(state.worldTime, 2);
   const weatherIndex = Math.floor(nextTick / WEATHER_CHANGE_INTERVAL_TICKS) % WEATHER_SEQUENCE.length;
   const nextWeather = WEATHER_SEQUENCE[weatherIndex];
 
   const occupied = new Set<string>();
+
+  // Hard-block the top row so NPCs never walk there.
+  for (let x = 0; x < GRID_WIDTH; x += 1) {
+    occupied.add(positionKey({ x, y: BLOCKED_ROW_TOP }));
+  }
 
   for (const npc of state.npcs) {
     occupied.add(positionKey(npc.runtime.position));
@@ -501,12 +574,13 @@ export function advanceDemoState(state: DemoState): DemoState {
     });
   }
 
-  const logs = [
-    ...state.logs,
-    `Tick ${nextTick}: ${nextWorldTime.hour.toString().padStart(2, "0")}:${nextWorldTime.minute
-      .toString()
-      .padStart(2, "0")}:${nextWorldTime.second.toString().padStart(2, "0")} - weather ${nextWeather}.`,
-  ].slice(-40);
+  const weatherChanged = nextWeather !== state.weather;
+  const logs = weatherChanged
+    ? [
+        ...state.logs,
+        `[Tick ${nextTick}] Weather changed → ${nextWeather.toLowerCase()}.`,
+      ].slice(-40)
+    : state.logs;
 
   return {
     ...state,
@@ -635,6 +709,7 @@ export function startInteraction(state: DemoState, candidate: InteractionCandida
     updates: [],
     summary: `${first.profile.name} and ${second.profile.name} started a conversation.`,
     startedAt,
+    startedAtMs: Date.now(),
   };
 
   return {
@@ -654,7 +729,6 @@ export function startInteraction(state: DemoState, candidate: InteractionCandida
 
       return npc;
     }),
-    logs: [`Conversation ${conversationId} started for ${candidate.reason}.`, ...state.logs].slice(0, 20),
   };
 }
 
@@ -666,12 +740,22 @@ export function finishInteraction(
   const first = getNpcById(state, firstId);
   const second = getNpcById(state, secondId);
 
-  if (!first || !second || !state.activeConversationId) {
-    return state;
+  if (!first || !second) {
+    return reconcileConversationRuntime(state);
+  }
+
+  if (!state.activeConversationId) {
+    return reconcileConversationRuntime(state);
   }
 
   const dialogue = buildConversation(first, second, state, candidate);
   const completedAt = toIsoTimestamp(state.worldTime);
+  const endedAtMs = Date.now();
+  const activeRecord = state.conversations.find((c) => c.id === state.activeConversationId);
+  const genTimeMs = activeRecord?.startedAtMs ? endedAtMs - activeRecord.startedAtMs : null;
+  const genTimeSec = genTimeMs !== null ? (genTimeMs / 1000).toFixed(1) : "?";
+  const zoneName = candidate.zoneId ?? "unknown zone";
+  const llmUpdateCount = dialogue.updates.filter((u) => u.source === "LLM_PACKAGE").length;
 
   return {
     ...state,
@@ -689,15 +773,16 @@ export function finishInteraction(
         updates: dialogue.updates,
         summary: dialogue.summary,
         endedAt: completedAt,
+        endedAtMs,
       };
     }),
     npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
     recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
     logs: [
-      `Conversation ${state.activeConversationId} completed.`,
-      ...dialogue.updates.map((u) => `[${u.source === "LLM_PACKAGE" ? "LLM" : "Engine"}] ${u.note}`),
+      `[CONV] ${first.profile.name} + ${second.profile.name} @ ${zoneName} — ${dialogue.turns.length} turns | gen: ${genTimeSec}s | ${llmUpdateCount} LLM updates`,
+      ...dialogue.updates.map((u) => `  [${u.source === "LLM_PACKAGE" ? "LLM" : "Engine"}] ${u.note}`),
       ...state.logs,
-    ].slice(0, 40),
+    ].slice(0, 60),
   };
 }
 
@@ -716,7 +801,7 @@ export function buildConversation(
   const timeLabel = `${state.worldTime.hour.toString().padStart(2, "0")}:${state.worldTime.minute
     .toString()
     .padStart(2, "0")}`;
-  const weatherText = weatherLabel(state.weather);
+  const weatherText = formatWeather(state.weather);
   const firstMood = moodFromContext(first.profile.role, state.weather, state.worldTime.hour);
   const secondMood = moodFromContext(second.profile.role, state.weather, state.worldTime.hour);
   const firstObjective = objectiveForConversation(first, state, candidate.zoneId);
@@ -867,6 +952,14 @@ export function applyConversationUpdates(
       }
     }
 
+    if (npcUpdates.length > 0 && nextRuntime.status === "in_conversation") {
+      nextRuntime = {
+        ...nextRuntime,
+        status: "idle",
+        destination: null,
+      };
+    }
+
     return {
       ...npc,
       runtime: nextRuntime,
@@ -888,10 +981,6 @@ export function formatWorldTime(time: WorldTime): string {
   return `Day ${time.day}, ${time.hour.toString().padStart(2, "0")}:${time.minute
     .toString()
     .padStart(2, "0")}:${time.second.toString().padStart(2, "0")}`;
-}
-
-export function formatWeather(weather: Weather): string {
-  return weatherLabel(weather);
 }
 
 export function formatRelationship(value: RelationshipType): string {
@@ -1043,10 +1132,12 @@ function chooseUnblockMove(
     x: blockedStep.x - current.x,
     y: blockedStep.y - current.y,
   };
-  const back = { x: -forward.x, y: -forward.y };
 
-  const baseOrder: Position[] = [
-    back,
+  // Lateral candidates only — no "back" here.  Going back resets blockedTicks
+  // to 0 and causes the NPC to try the same blocked route again next tick,
+  // producing an infinite oscillation.  Staying put (returning null) is safer:
+  // blockedTicks keeps climbing until the reroute threshold is reached.
+  const laterals: Position[] = [
     { x: 0, y: -1 },
     { x: 0, y: 1 },
     { x: -1, y: 0 },
@@ -1054,20 +1145,12 @@ function chooseUnblockMove(
   ];
 
   const tryOrder: Position[] = [];
-  for (const delta of baseOrder) {
+  for (const delta of laterals) {
     if (delta.x === forward.x && delta.y === forward.y) {
       continue;
     }
 
-    if (tryOrder.some((existing) => existing.x === delta.x && existing.y === delta.y)) {
-      continue;
-    }
-
     tryOrder.push(delta);
-  }
-
-  if (tryOrder.length === 0) {
-    return null;
   }
 
   const start = blockedTicks % tryOrder.length;
@@ -1183,7 +1266,7 @@ function advanceWorldTime(time: WorldTime, seconds: number): WorldTime {
   };
 }
 
-function weatherLabel(weather: Weather): string {
+export function formatWeather(weather: Weather): string {
   switch (weather) {
     case "SUNNY":
       return "Sunny";

@@ -3,7 +3,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./DemoApp.module.css";
 import {
   advanceDemoState,
@@ -18,7 +18,9 @@ import {
   getGridWidth,
   getZoneForPosition,
   hydrateNpcProfile,
+  interactionCandidateFromConversation,
   randomizeNpcPositions,
+  reconcileConversationRuntime,
   startInteraction,
   type CharacterUpdate,
   type ConversationRecord,
@@ -60,6 +62,7 @@ const VIEW_LABELS: Record<DemoView, ViewLabel> = {
 export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   const [state, setState] = useState<DemoState>(() => createInitialDemoState());
   const [pendingCandidate, setPendingCandidate] = useState<InteractionCandidate | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<number | null>(null);
   const simulationStartRef = useRef(Date.now());
@@ -83,6 +86,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     }
 
     hasHydratedStorageRef.current = true;
+    setIsHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -94,7 +98,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   }, [state]);
 
   useEffect(() => {
-    if (view !== "simulation") {
+    if (!isHydrated) {
       return;
     }
 
@@ -105,7 +109,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [view]);
+  }, [isHydrated]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -121,12 +125,46 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     return () => {
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
+        timerRef.current = null;
       }
     };
   }, []);
 
   useEffect(() => {
-    if (view !== "simulation") {
+    if (!isHydrated) {
+      return;
+    }
+
+    if (!state.activeConversationId) {
+      if (pendingCandidate) {
+        setPendingCandidate(null);
+      }
+      return;
+    }
+
+    const activeConversation = state.conversations.find(
+      (conversation) => conversation.id === state.activeConversationId,
+    );
+
+    if (!activeConversation || activeConversation.status !== "generating") {
+      return;
+    }
+
+    if (timerRef.current !== null) {
+      return;
+    }
+
+    const candidate = interactionCandidateFromConversation(activeConversation);
+    setPendingCandidate(candidate);
+    timerRef.current = window.setTimeout(() => {
+      setState((current) => finishInteraction(current, candidate));
+      setPendingCandidate(null);
+      timerRef.current = null;
+    }, GENERATION_DELAY_MS);
+  }, [isHydrated, pendingCandidate, state.activeConversationId, state.conversations]);
+
+  useEffect(() => {
+    if (!isHydrated) {
       return;
     }
 
@@ -138,30 +176,33 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     if (candidate) {
       beginConversation(candidate);
     }
-  }, [pendingCandidate, state, view]);
+  }, [isHydrated, pendingCandidate, state]);
 
   const activeConversation = useMemo(() => {
     if (!state.activeConversationId) {
-      return state.conversations[0] ?? null;
+      return null;
     }
 
     return state.conversations.find((conversation) => conversation.id === state.activeConversationId) ?? null;
   }, [state.activeConversationId, state.conversations]);
 
-  function beginConversation(candidate: InteractionCandidate) {
-    if (timerRef.current !== null) {
-      return;
-    }
+  const beginConversation = useCallback(
+    (candidate: InteractionCandidate) => {
+      if (timerRef.current !== null) {
+        return;
+      }
 
-    setPendingCandidate(candidate);
-    setState((current) => startInteraction(current, candidate));
+      setPendingCandidate(candidate);
+      setState((current) => startInteraction(current, candidate));
 
-    timerRef.current = window.setTimeout(() => {
-      setState((current) => finishInteraction(current, candidate));
-      setPendingCandidate(null);
-      timerRef.current = null;
-    }, GENERATION_DELAY_MS);
-  }
+      timerRef.current = window.setTimeout(() => {
+        setState((current) => finishInteraction(current, candidate));
+        setPendingCandidate(null);
+        timerRef.current = null;
+      }, GENERATION_DELAY_MS);
+    },
+    [],
+  );
 
   const isSimulationView = view === "simulation";
 
@@ -209,153 +250,217 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
       <div
         className={`${styles.mainContent} ${isSimulationView ? styles.mainSimulation : styles.mainScrollable}`}
       >
-        {view === "simulation" && renderSimulationView()}
-        {view === "history" && renderHistoryView()}
-        {view === "database" && renderDatabaseView()}
+        {view === "simulation" && (
+          <SimulationView
+            zones={state.zones}
+            npcs={state.npcs}
+            conversations={state.conversations}
+            activeConversation={activeConversation}
+          />
+        )}
+        {view === "history" && (
+          <HistoryView
+            conversations={state.conversations}
+            npcs={state.npcs}
+            logs={state.logs}
+          />
+        )}
+        {view === "database" && <DatabaseView state={state} />}
       </div>
     </div>
   );
+}
 
-  function renderSimulationView() {
-    return (
-      <div className={styles.layout}>
-        <section className={styles.boardPanel} aria-label="Game world">
-          <div className={styles.gridShell}>
-            <div
-              className={styles.grid}
-              style={{
-                gridTemplateColumns: `repeat(${getGridWidth()}, minmax(0, 1fr))`,
-                gridTemplateRows: `repeat(${getGridHeight()}, minmax(0, 1fr))`,
-              }}
-            >
-              {state.zones.map((zone) => (
-                <div
-                  key={zone.id}
-                  className={styles.zone}
-                  style={{
-                    gridColumn: `${zone.topLeft.x + 1} / ${zone.bottomRight.x + 2}`,
-                    gridRow: `${zone.topLeft.y + 1} / ${zone.bottomRight.y + 2}`,
-                  }}
-                >
-                  <span>{zone.name}</span>
-                </div>
-              ))}
-
-              {Array.from({ length: getGridWidth() * getGridHeight() }, (_, index) => {
-                const x = index % getGridWidth();
-                const y = Math.floor(index / getGridWidth());
-                return <div key={`${x}-${y}`} className={styles.cell} />;
-              })}
-            </div>
-
-            <div className={styles.tokensLayer} aria-hidden="true">
-              {state.npcs.map((npc) => {
-                const active = activeConversation?.participantIds.includes(npc.profile.id) ?? false;
-                const chatting = active && activeConversation?.status === "generating";
-                const blocked = !active && (npc.runtime.blockedTicks ?? 0) >= 1;
-                return (
-                  <NpcToken
-                    key={npc.profile.id}
-                    npc={npc}
-                    active={active}
-                    chatting={chatting}
-                    blocked={blocked}
-                    zones={state.zones}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        <aside className={styles.conversationFeed} aria-label="Generated conversations">
-          <section className={`${styles.panel} ${styles.conversationFeedPanel}`}>
-            <div className={styles.panelHeader}>
-              <div>
-                <h2>Generated conversations</h2>
-                <p>
-                  Full dialogue and structured updates appear here as soon as a conversation
-                  finishes. Scroll to review earlier exchanges from today.
-                </p>
-                <div className={styles.sourceLegend} aria-label="Override source colors">
-                  <span className={styles.updateChipClassic}>Classic engine</span>
-                  <span className={styles.updateChipLlm}>Package LLM</span>
-                </div>
+function SimulationView({
+  zones,
+  npcs,
+  conversations,
+  activeConversation,
+}: Readonly<{
+  zones: DemoState["zones"];
+  npcs: DemoState["npcs"];
+  conversations: DemoState["conversations"];
+  activeConversation: ConversationRecord | null;
+}>) {
+  return (
+    <div className={styles.layout}>
+      <section className={styles.boardPanel} aria-label="Game world">
+        <div className={styles.gridShell}>
+          <div
+            className={styles.grid}
+            style={{
+              gridTemplateColumns: `repeat(${getGridWidth()}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${getGridHeight()}, minmax(0, 1fr))`,
+            }}
+          >
+            {zones.map((zone) => (
+              <div
+                key={zone.id}
+                className={styles.zone}
+                style={{
+                  gridColumn: `${zone.topLeft.x + 1} / ${zone.bottomRight.x + 2}`,
+                  gridRow: `${zone.topLeft.y + 1} / ${zone.bottomRight.y + 2}`,
+                }}
+              >
+                <span>{zone.name}</span>
               </div>
-              <span className={styles.badge}>
-                {activeConversation ? activeConversation.status : "idle"}
-              </span>
-            </div>
+            ))}
 
-            <div className={`${styles.panelScroll} ${styles.historyList}`}>
-              {state.conversations.length > 0 ? (
-                state.conversations.map((conversation) => (
-                  <ConversationCard key={conversation.id} conversation={conversation} />
-                ))
-              ) : (
-                <p className={styles.placeholder}>
-                  No conversations yet. NPCs will trigger one automatically when they meet on the
-                  map.
-                </p>
-              )}
-            </div>
-          </section>
-        </aside>
-      </div>
-    );
-  }
+            {Array.from({ length: getGridWidth() * getGridHeight() }, (_, index) => {
+              const x = index % getGridWidth();
+              const y = Math.floor(index / getGridWidth());
+              return <div key={`${x}-${y}`} className={styles.cell} />;
+            })}
+          </div>
 
-  function renderHistoryView() {
-    return (
-      <div className={styles.historyLayout}>
-        <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Conversation history">
+          <div className={styles.tokensLayer} aria-hidden="true">
+            {npcs.map((npc) => {
+              const active = activeConversation?.participantIds.includes(npc.profile.id) ?? false;
+              const chatting = active && activeConversation?.status === "generating";
+              const blocked = !active && (npc.runtime.blockedTicks ?? 0) >= 1;
+              return (
+                <NpcToken
+                  key={npc.profile.id}
+                  npc={npc}
+                  active={active}
+                  chatting={chatting}
+                  blocked={blocked}
+                  zones={zones}
+                />
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <aside className={styles.conversationFeed} aria-label="Generated conversations">
+        <section className={`${styles.panel} ${styles.conversationFeedPanel}`}>
           <div className={styles.panelHeader}>
             <div>
-              <h2>Saved conversations</h2>
-              <p>These are persisted locally and can be reopened after a reload.</p>
+              <h2>Generated conversations</h2>
+              <p>
+                Full dialogue and structured updates appear here as soon as a conversation
+                finishes. Scroll to review earlier exchanges from today.
+              </p>
+              <div className={styles.sourceLegend} aria-label="Override source colors">
+                <span className={styles.updateChipClassic}>Classic engine</span>
+                <span className={styles.updateChipLlm}>Package LLM</span>
+              </div>
             </div>
+            <span className={styles.badge}>
+              {activeConversation ? activeConversation.status : "idle"}
+            </span>
           </div>
 
-          <div className={styles.historyList}>
-            {state.conversations.length > 0 ? (
-              state.conversations.map((conversation) => (
-                <ConversationCard key={conversation.id} conversation={conversation} />
+          <div className={`${styles.panelScroll} ${styles.historyList}`}>
+            {conversations.length > 0 ? (
+              conversations.map((conversation) => (
+                <ConversationCardCompact key={conversation.id} conversation={conversation} />
               ))
             ) : (
-              <p className={styles.placeholder}>No saved conversations yet.</p>
+              <p className={styles.placeholder}>
+                No conversations yet. NPCs will trigger one automatically when they meet on the
+                map.
+              </p>
             )}
           </div>
         </section>
+      </aside>
+    </div>
+  );
+}
 
-        <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Debug trail">
-          <div className={styles.panelHeader}>
-            <div>
-              <h2>Debug trail</h2>
-              <p>Useful for demo narration and verification.</p>
-            </div>
-          </div>
-
-          <ul className={styles.logList}>
-            {state.logs.map((log) => (
-              <li key={log}>{log}</li>
-            ))}
-          </ul>
-        </section>
-      </div>
-    );
-  }
-
-  function renderDatabaseView() {
-    return (
-      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="NPC database">
+function HistoryView({
+  conversations,
+  npcs,
+  logs,
+}: Readonly<{
+  conversations: DemoState["conversations"];
+  npcs: DemoState["npcs"];
+  logs: DemoState["logs"];
+}>) {
+  return (
+    <div className={styles.historyLayout}>
+      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Conversation history">
         <div className={styles.panelHeader}>
           <div>
-            <h2>NPC runtime database</h2>
-            <p>A read-only view of the in-memory simulation state.</p>
+            <h2>Conversation history</h2>
+            <p>Full dialogue, extracted memories, relationship changes, mood shifts, and new objectives — all as returned by the LLM.</p>
           </div>
         </div>
 
-        <div className={styles.contentBody}>
+        <div className={styles.historyList}>
+          {conversations.length > 0 ? (
+            conversations.map((conversation) => (
+              <ConversationCard key={conversation.id} conversation={conversation} npcs={npcs} />
+            ))
+          ) : (
+            <p className={styles.placeholder}>No conversations yet. The simulation generates them automatically.</p>
+          )}
+        </div>
+      </section>
+
+      <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Debug trail">
+        <div className={styles.panelHeader}>
+          <div>
+            <h2>Debug trail</h2>
+            <p>Useful for demo narration and verification.</p>
+          </div>
+        </div>
+
+        <ul className={styles.logList}>
+          {logs.map((log) => (
+            <li key={log}>{log}</li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function DatabaseView({ state }: Readonly<{ state: DemoState }>) {
+  const completedConversations = state.conversations.filter((c) => c.status === "completed");
+  const genTimes = completedConversations
+    .filter((c) => c.startedAtMs && c.endedAtMs)
+    .map((c) => (c.endedAtMs! - c.startedAtMs!) / 1000);
+  const avgGenTime = genTimes.length > 0
+    ? (genTimes.reduce((a, b) => a + b, 0) / genTimes.length).toFixed(1)
+    : "—";
+  const totalLlmUpdates = completedConversations.reduce(
+    (sum, c) => sum + c.updates.filter((u) => u.source === "LLM_PACKAGE").length,
+    0,
+  );
+
+  const npcPagination = usePagination(state.npcs);
+  const convPagination = usePagination(state.conversations);
+  const overridePagination = usePagination(state.recentOverrides);
+  const logPagination = usePagination(state.logs);
+
+  return (
+    <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="NPC database">
+      <div className={styles.panelHeader}>
+        <div>
+          <h2>NPC runtime database</h2>
+          <p>A read-only view of the in-memory simulation state.</p>
+        </div>
+      </div>
+
+      <div className={styles.contentBody}>
+        <div className={styles.dbSummaryRow}>
+          <SummaryCard label="Conversations" value={String(state.conversations.length)} />
+          <SummaryCard label="Avg gen time" value={avgGenTime === "—" ? "—" : `${avgGenTime}s`} />
+          <SummaryCard label="LLM updates applied" value={String(totalLlmUpdates)} />
+          <SummaryCard label="Active NPC overrides" value={String(state.recentOverrides.length)} />
+        </div>
+
+        <div className={styles.tableSection}>
+          <div className={styles.tableSectionHeader}>
+            <div>
+              <h3>NPCs</h3>
+              <p>{state.npcs.length} characters</p>
+            </div>
+            <PaginationBar {...npcPagination} />
+          </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
@@ -369,7 +474,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
                 </tr>
               </thead>
               <tbody>
-                {state.npcs.map((npc) => (
+                {npcPagination.slice.map((npc) => (
                   <tr key={npc.profile.id}>
                     <td>
                       <strong>{npc.profile.name}</strong>
@@ -378,57 +483,156 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
                     <td>{npc.profile.role}</td>
                     <td>{npc.runtime.mood}</td>
                     <td>{formatObjective(npc.runtime.objective)}</td>
-                    <td>
-                      {npc.runtime.position.x}, {npc.runtime.position.y}
-                    </td>
+                    <td>{npc.runtime.position.x}, {npc.runtime.position.y}</td>
                     <td>{npc.memories.slice(0, 2).join(" | ")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
 
-          <section className={styles.overridePanel} aria-label="Override actions">
-            <div className={styles.panelHeader}>
+        {state.conversations.length > 0 && (
+          <div className={styles.tableSection}>
+            <div className={styles.tableSectionHeader}>
               <div>
-                <h2>Override actions</h2>
-                <p>Blue = Classic engine overrides, violet = package/LLM overrides.</p>
+                <h3>Conversation metrics</h3>
+                <p>Generation time, turns, and LLM updates per conversation.</p>
               </div>
+              <PaginationBar {...convPagination} />
+            </div>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Participants</th>
+                    <th>Zone</th>
+                    <th>Status</th>
+                    <th>Turns</th>
+                    <th>Gen time</th>
+                    <th>LLM updates</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {convPagination.slice.map((conv) => {
+                    const genMs = conv.startedAtMs && conv.endedAtMs
+                      ? ((conv.endedAtMs - conv.startedAtMs) / 1000).toFixed(1) + "s"
+                      : conv.status === "generating" ? "…" : "—";
+                    const llmCount = conv.updates.filter((u) => u.source === "LLM_PACKAGE").length;
+                    return (
+                      <tr key={conv.id}>
+                        <td><strong>{conv.participantNames.join(" + ")}</strong></td>
+                        <td>{conv.zoneId ?? "—"}</td>
+                        <td><span className={styles.badge}>{conv.status}</span></td>
+                        <td>{conv.generatedTurnCount}</td>
+                        <td>{genMs}</td>
+                        <td>{llmCount}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div className={styles.dbLogsRow}>
+          <section className={styles.overridePanel} aria-label="Override actions">
+            <div className={styles.tableSectionHeader}>
+              <div>
+                <h3>Override actions</h3>
+                <p>Blue = Classic engine, violet = LLM.</p>
+              </div>
+              <PaginationBar {...overridePagination} />
             </div>
             <div className={styles.overrideList}>
-              {state.recentOverrides.slice(0, 12).map((event) => (
+              {overridePagination.slice.map((event) => (
                 <OverrideEventRow key={event.id} event={event} />
               ))}
             </div>
           </section>
 
-          <div className={styles.databaseGrid}>
-            {state.npcs.map((npc) => (
-              <article key={npc.profile.id} className={styles.smallCard}>
-                <div className={styles.smallCardHeader}>
-                  <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
-                  <div className={styles.smallCardHeaderText}>
-                    <strong>{npc.profile.name}</strong>
-                    <span>{npc.profile.role}</span>
-                  </div>
-                </div>
-                <p className={styles.loreText}>{npc.profile.lore}</p>
-                <p>{npc.profile.personality.join(", ")}</p>
-                <p>{npc.profile.goals.join(", ")}</p>
-                <p>
-                  Relationship sample:{" "}
-                  {Object.values(npc.relationships)
-                    .slice(0, 2)
-                    .map((relation) => formatRelationship(relation))
-                    .join(", ")}
-                </p>
-              </article>
-            ))}
-          </div>
+          <section className={styles.overridePanel} aria-label="System logs">
+            <div className={styles.tableSectionHeader}>
+              <div>
+                <h3>System logs</h3>
+                <p>Generation results, state mutations, weather.</p>
+              </div>
+              <PaginationBar {...logPagination} />
+            </div>
+            <ul className={styles.logList}>
+              {logPagination.slice.map((log) => (
+                <li key={log}>{log}</li>
+              ))}
+            </ul>
+          </section>
         </div>
-      </section>
-    );
-  }
+
+        <div className={styles.databaseGrid}>
+          {state.npcs.map((npc) => (
+            <article key={npc.profile.id} className={styles.smallCard}>
+              <div className={styles.smallCardHeader}>
+                <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
+                <div className={styles.smallCardHeaderText}>
+                  <strong>{npc.profile.name}</strong>
+                  <span>{npc.profile.role}</span>
+                </div>
+              </div>
+              <p className={styles.loreText}>{npc.profile.lore}</p>
+              <p>{npc.profile.personality.join(", ")}</p>
+              <p>{npc.profile.goals.join(", ")}</p>
+              <p>
+                Relationship sample:{" "}
+                {Object.values(npc.relationships)
+                  .slice(0, 2)
+                  .map((relation) => formatRelationship(relation))
+                  .join(", ")}
+              </p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const PAGE_SIZE = 10;
+
+function usePagination<T>(items: T[]) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const slice = items.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  return { page: safePage, setPage, totalPages, slice };
+}
+
+function PaginationBar({
+  page,
+  totalPages,
+  setPage,
+}: Readonly<{ page: number; totalPages: number; setPage: (p: number) => void }>) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className={styles.pagination}>
+      <button
+        className={styles.pageBtn}
+        disabled={page === 0}
+        onClick={() => setPage(page - 1)}
+      >
+        ‹
+      </button>
+      <span className={styles.pageLabel}>
+        {page + 1} / {totalPages}
+      </span>
+      <button
+        className={styles.pageBtn}
+        disabled={page >= totalPages - 1}
+        onClick={() => setPage(page + 1)}
+      >
+        ›
+      </button>
+    </div>
+  );
 }
 
 function SummaryCard({ label, value }: Readonly<{ label: string; value: string }>) {
@@ -487,7 +691,10 @@ function NpcToken({
   return (
     <div className={`${styles.tokenWrapper} ${styles.tokenAnimated}`} style={{ left, top, zIndex: chatting ? 10 : 2 }}>
       {chatting ? (
-        <div className={styles.speechBubble} aria-label={`${npc.profile.name} is talking`}>
+        <div
+          className={styles.speechBubble}
+          aria-label={`${npc.profile.name} is talking`}
+        >
           <span className={styles.speechBubbleDots} aria-hidden="true">
             <span />
             <span />
@@ -512,66 +719,140 @@ function NpcToken({
   );
 }
 
-function formatUpdateChip(
-  update: CharacterUpdate,
-  participantIds: [string, string],
-  participantNames: [string, string],
-): string {
-  const idx = participantIds.indexOf(update.characterId);
-  const name = idx >= 0 ? participantNames[idx].split(" ")[0] : "?";
-
-  switch (update.type) {
-    case "UPDATE_MOOD":
-      return `${name}: ${update.mood}`;
-    case "UPDATE_OBJECTIVE":
-      return `${name}: ${update.objective.label}`;
-    case "ADD_MEMORY":
-      return `${name}: mémoire+`;
-    case "UPDATE_RELATIONSHIP":
-      return `${name}: → ${update.relationship.toLowerCase().replace("_", " ")}`;
-  }
-}
-
-function ConversationCard({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
+function ConversationCardCompact({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
+  const llmCount = conversation.updates.filter((u) => u.source === "LLM_PACKAGE").length;
   return (
     <article className={styles.conversationCard}>
       <header className={styles.conversationHeader}>
         <div>
           <strong>{conversation.participantNames.join(" + ")}</strong>
-          <p>
-            {conversation.reason} {conversation.zoneId ? `at ${conversation.zoneId}` : ""}
-          </p>
+          <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
+        </div>
+        <span className={styles.badge}>{conversation.status}</span>
+      </header>
+      <p className={styles.conversationSummary}>{conversation.summary}</p>
+      {llmCount > 0 && (
+        <p className={styles.llmTag}>{llmCount} LLM update{llmCount > 1 ? "s" : ""} applied</p>
+      )}
+      {conversation.status === "failed" && (
+        <p className={styles.failedNote}>Interrupted by page reload — generation was lost.</p>
+      )}
+    </article>
+  );
+}
+
+function formatUpdateDetail(
+  update: CharacterUpdate,
+  participantIds: [string, string],
+  participantNames: [string, string],
+  npcs: NpcState[],
+): { label: string; detail: string; isLlm: boolean } {
+  const idx = participantIds.indexOf(update.characterId);
+  const name = idx >= 0 ? participantNames[idx] : "?";
+  const isLlm = update.source === "LLM_PACKAGE";
+
+  switch (update.type) {
+    case "UPDATE_MOOD":
+      return { label: `${name} — mood`, detail: update.mood.toLowerCase(), isLlm };
+    case "UPDATE_OBJECTIVE": {
+      const goalType = update.objective.type === "GO_TO_LOCATION" ? "go to" : "idle";
+      return { label: `${name} — new goal`, detail: `${goalType}: ${update.objective.label}`, isLlm };
+    }
+    case "ADD_MEMORY":
+      return { label: `${name} — memory`, detail: update.memory, isLlm };
+    case "UPDATE_RELATIONSHIP": {
+      const target = npcs.find((n) => n.profile.id === update.targetCharacterId);
+      const targetName = target?.profile.name ?? update.targetCharacterId;
+      return {
+        label: `${name} → ${targetName}`,
+        detail: formatRelationship(update.relationship),
+        isLlm,
+      };
+    }
+  }
+}
+
+function ConversationCard({
+  conversation,
+  npcs,
+}: Readonly<{ conversation: ConversationRecord; npcs: NpcState[] }>) {
+  const llmUpdates = conversation.updates.filter((u) => u.source === "LLM_PACKAGE");
+  const classicUpdates = conversation.updates.filter((u) => u.source === "CLASSIC_ENGINE");
+
+  return (
+    <article className={styles.conversationCard}>
+      <header className={styles.conversationHeader}>
+        <div>
+          <strong>{conversation.participantNames.join(" + ")}</strong>
+          <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
         </div>
         <span className={styles.badge}>{conversation.status}</span>
       </header>
 
       <p className={styles.conversationSummary}>{conversation.summary}</p>
+
       {conversation.status === "failed" ? (
         <p className={styles.failedNote}>Interrupted by page reload — generation was lost.</p>
       ) : (
-        <p className={styles.llmTag}>Generated by package interaction pipeline</p>
+        <p className={styles.llmTag}>Generated by package interaction pipeline · {conversation.generatedTurnCount} turns</p>
       )}
 
-      <div className={styles.turnList}>
-        {conversation.turns.map((turn) => (
-          <div key={`${conversation.id}-${turn.index}`} className={styles.turnItem}>
-            <strong>{turn.speakerName}</strong>
-            <span>{turn.message}</span>
-          </div>
-        ))}
-      </div>
+      {conversation.turns.length > 0 && (
+        <div className={styles.turnList}>
+          {conversation.turns.map((turn) => (
+            <div key={`${conversation.id}-${turn.index}`} className={styles.turnItem}>
+              <strong>{turn.speakerName}</strong>
+              <span>{turn.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
-      <div className={styles.updateList}>
-        {conversation.updates.map((update, index) => (
-          <span
-            key={`${conversation.id}-${index}`}
-            className={`${styles.updateChip} ${update.source === "CLASSIC_ENGINE" ? styles.updateChipClassic : styles.updateChipLlm}`}
-            title={update.note}
-          >
-            {formatUpdateChip(update, conversation.participantIds, conversation.participantNames)}
-          </span>
-        ))}
-      </div>
+      {llmUpdates.length > 0 && (
+        <div className={styles.updatesSection}>
+          <p className={styles.updatesSectionLabel}>LLM extractions</p>
+          <div className={styles.updateRows}>
+            {llmUpdates.map((update, i) => {
+              const { label, detail } = formatUpdateDetail(
+                update,
+                conversation.participantIds,
+                conversation.participantNames,
+                npcs,
+              );
+              return (
+                <div key={`llm-${i}`} className={styles.updateRow}>
+                  <span className={styles.updateRowLabel}>{label}</span>
+                  <span className={styles.updateRowDetail}>{detail}</span>
+                  <span className={`${styles.updateChip} ${styles.updateChipLlm}`}>LLM</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {classicUpdates.length > 0 && (
+        <div className={styles.updatesSection}>
+          <p className={styles.updatesSectionLabel}>Classic engine</p>
+          <div className={styles.updateRows}>
+            {classicUpdates.map((update, i) => {
+              const { label, detail } = formatUpdateDetail(
+                update,
+                conversation.participantIds,
+                conversation.participantNames,
+                npcs,
+              );
+              return (
+                <div key={`classic-${i}`} className={styles.updateRow}>
+                  <span className={styles.updateRowLabel}>{label}</span>
+                  <span className={styles.updateRowDetail}>{detail}</span>
+                  <span className={`${styles.updateChip} ${styles.updateChipClassic}`}>Classic</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </article>
   );
 }
@@ -619,60 +900,45 @@ function writeSavedState(state: DemoState) {
   );
 }
 
-function normalizeSavedState(state: DemoState & { player?: unknown }): DemoState {
-  const { player: _player, ...rest } = state;
-
-  // Always release any NPC stuck in_conversation — can happen if a previous
-  // recovery pass cleared activeConversationId but didn't reset the NPC status
-  // (old code), or if the state is otherwise inconsistent.
-  const normalizedNpcs = rest.npcs.map((npc) => {
-    const hydrated = hydrateNpcProfile(npc);
-    if (hydrated.runtime.status !== "in_conversation") {
-      return hydrated;
-    }
-    return {
-      ...hydrated,
-      runtime: {
-        ...hydrated.runtime,
-        status: "idle" as const,
-        destination: null,
-        lastInteractionTick: rest.tick,
+function normalizeSavedState(state: DemoState): DemoState {
+  const baseState = reconcileConversationRuntime(
+    {
+      ...state,
+      worldTime: {
+        ...state.worldTime,
+        second: state.worldTime.second ?? 0,
       },
-    };
-  });
-
-  const baseState = {
-    ...rest,
-    worldTime: {
-      ...rest.worldTime,
-      second: rest.worldTime.second ?? 0,
+      recentOverrides: state.recentOverrides ?? [],
+      npcs: state.npcs.map(hydrateNpcProfile),
     },
-    recentOverrides: rest.recentOverrides ?? [],
-    npcs: normalizedNpcs,
-  };
+    { stampCooldownOnRelease: true },
+  );
 
-  if (!rest.activeConversationId) {
+  if (!state.activeConversationId) {
     return baseState;
   }
 
   const completedAt = new Date().toISOString();
 
-  return {
-    ...baseState,
-    activeConversationId: null,
-    conversations: rest.conversations.map((conversation) => {
-      if (conversation.id !== rest.activeConversationId) {
-        return conversation;
-      }
+  return reconcileConversationRuntime(
+    {
+      ...baseState,
+      activeConversationId: null,
+      conversations: state.conversations.map((conversation) => {
+        if (conversation.id !== state.activeConversationId) {
+          return conversation;
+        }
 
-      return {
-        ...conversation,
-        status: "failed",
-        endedAt: completedAt,
-      };
-    }),
-    logs: [`Recovered from interrupted conversation ${rest.activeConversationId}.`, ...rest.logs].slice(0, 20),
-  };
+        return {
+          ...conversation,
+          status: "failed",
+          endedAt: completedAt,
+        };
+      }),
+      logs: [`Recovered from interrupted conversation ${state.activeConversationId}.`, ...state.logs].slice(0, 20),
+    },
+    { stampCooldownOnRelease: true },
+  );
 }
 
 function isSavedDemoState(
