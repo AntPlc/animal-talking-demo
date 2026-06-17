@@ -120,6 +120,7 @@ export interface OverrideEvent {
   type: CharacterUpdate["type"];
   source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
   note: string;
+  timestamp: string;
 }
 
 export interface ConversationRecord {
@@ -1325,7 +1326,7 @@ export function formatTimestamp(date: Date): string {
   const hh = date.getHours().toString().padStart(2, "0");
   const min = date.getMinutes().toString().padStart(2, "0");
   const ss = date.getSeconds().toString().padStart(2, "0");
-  return `${dd}${mm}${yy}:${hh}${min}${ss}`;
+  return `${mm}/${dd}/${yy} ${hh}:${min}:${ss}`;
 }
 
 // Deterministically picks one entry from a template array using a string-hashed seed.
@@ -1758,6 +1759,7 @@ function registerOverrideEvents(
     type: update.type,
     source: update.source,
     note: update.note,
+    timestamp: update.timestamp,
   }));
 
   return [...nextEvents, ...existing].slice(0, 40);

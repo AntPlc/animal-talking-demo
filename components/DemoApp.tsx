@@ -22,7 +22,6 @@ import {
   randomizeNpcPositions,
   reconcileConversationRuntime,
   startInteraction,
-  type CharacterUpdate,
   type ConversationRecord,
   type DemoState,
   type DemoView,
@@ -37,6 +36,7 @@ const STORAGE_VERSION = 5;
 // Presence of this key in sessionStorage signals a normal reload (not hard refresh).
 // sessionStorage is cleared on Shift+F5 / Ctrl+Shift+R, preserved on F5.
 const SESSION_KEY = "animal-talking-session-v4";
+const SESSION_START_KEY = "animal-talking-session-start-v5";
 const TICK_INTERVAL_MS = 1800;
 const GENERATION_DELAY_MS = Number(process.env.NEXT_PUBLIC_GENERATION_DELAY_MS) || 20_000;
 
@@ -50,8 +50,7 @@ const VIEW_LABELS: Record<DemoView, ViewLabel> = {
     title: "Simulation view",
   },
   data: {
-    title: "Data",
-    description: "Runtime state, conversation history, and extracted updates for every character.",
+    title: "Data"
   },
 };
 
@@ -76,8 +75,18 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     }
 
     if (isHardRefresh) {
-      setState((current) => randomizeNpcPositions(current, Date.now()));
+      const startMs = Date.now();
+      sessionStorage.setItem(SESSION_START_KEY, String(startMs));
+      simulationStartRef.current = startMs;
+      setElapsedMs(0);
+      setState((current) => randomizeNpcPositions(current, startMs));
     } else {
+      const storedStart = sessionStorage.getItem(SESSION_START_KEY);
+      if (storedStart) {
+        const start = parseInt(storedStart, 10);
+        simulationStartRef.current = start;
+        setElapsedMs(Date.now() - start);
+      }
       const saved = readSavedState();
       if (saved) {
         setState(normalizeSavedState(saved));
@@ -154,11 +163,13 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
 
     const candidate = interactionCandidateFromConversation(activeConversation);
     setPendingCandidate(candidate);
+    const elapsed = activeConversation.startedAtMs ? Date.now() - activeConversation.startedAtMs : 0;
+    const remainingMs = Math.max(0, GENERATION_DELAY_MS - elapsed);
     timerRef.current = window.setTimeout(() => {
       setState((current) => finishInteraction(current, candidate));
       setPendingCandidate(null);
       timerRef.current = null;
-    }, GENERATION_DELAY_MS);
+    }, remainingMs);
   }, [isHydrated, pendingCandidate, state.activeConversationId, state.conversations]);
 
   useEffect(() => {
@@ -227,20 +238,13 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         </nav>
       </header>
 
-      <section
-        className={`${styles.topRow} ${isSimulationView ? styles.topRowSimulation : ""}`}
-        aria-label="World summary"
-      >
-        <SummaryCard label="World time" value={formatWorldTime(state.worldTime)} />
-        <SummaryCard label="Weather" value={`${weatherIcon(state.weather)} ${formatWeather(state.weather)}`} />
-        <SummaryCard label="Elapsed (real)" value={formatElapsed(elapsedMs)} />
-        {!isSimulationView ? (
-          <SummaryCard
-            label="Active conversation"
-            value={activeConversation ? activeConversation.summary : "None"}
-          />
-        ) : null}
-      </section>
+      {isSimulationView && (
+        <section className={`${styles.topRow} ${styles.topRowSimulation}`} aria-label="World summary">
+          <SummaryCard label="World time" value={formatWorldTime(state.worldTime)} />
+          <SummaryCard label="Weather" value={`${weatherIcon(state.weather)} ${formatWeather(state.weather)}`} />
+          <SummaryCard label="Elapsed (real)" value={formatElapsed(elapsedMs)} />
+        </section>
+      )}
 
       <div
         className={`${styles.mainContent} ${isSimulationView ? styles.mainSimulation : styles.mainScrollable}`}
@@ -325,20 +329,7 @@ function SimulationView({
       <aside className={styles.conversationFeed} aria-label="Generated conversations">
         <section className={`${styles.panel} ${styles.conversationFeedPanel}`}>
           <div className={styles.panelHeader}>
-            <div>
               <h2>Generated conversations</h2>
-              <p>
-                Full dialogue and structured updates appear here as soon as a conversation
-                finishes. Scroll to review earlier exchanges from today.
-              </p>
-              <div className={styles.sourceLegend} aria-label="Override source colors">
-                <span className={styles.updateChipClassic}>Classic engine</span>
-                <span className={styles.updateChipLlm}>Package LLM</span>
-              </div>
-            </div>
-            <span className={styles.badge}>
-              {activeConversation ? activeConversation.status : "idle"}
-            </span>
           </div>
 
           <div className={`${styles.panelScroll} ${styles.historyList}`}>
@@ -377,6 +368,8 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   const npcPagination = usePagination(state.npcs);
   const convPagination = usePagination(state.conversations);
   const overridePagination = usePagination(state.recentOverrides);
+  const reversedConversations = [...state.conversations].reverse();
+  const historyPagination = usePagination(reversedConversations, CONV_PAGE_SIZE);
 
   return (
     <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Data">
@@ -395,51 +388,47 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
           <SummaryCard label="Active NPC overrides" value={String(state.recentOverrides.length)} />
         </div>
 
-        <div className={styles.tableSection}>
-          <div className={styles.tableSectionHeader}>
-            <div>
-              <h3>NPCs</h3>
-              <p>{state.npcs.length} characters</p>
+        <div className={`${styles.dataBlock} ${styles.tablesRow}`}>
+          <div className={styles.tableSection}>
+            <div className={styles.tableSectionHeader}>
+              <div>
+                <h3>NPCs</h3>
+                <p>{state.npcs.length} characters</p>
+              </div>
+              <PaginationBar {...npcPagination} />
             </div>
-            <PaginationBar {...npcPagination} />
-          </div>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Role</th>
-                  <th>Mood</th>
-                  <th>Objective</th>
-                  <th>Position</th>
-                  <th>Memory trail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {npcPagination.slice.map((npc) => (
-                  <tr key={npc.profile.id}>
-                    <td>
-                      <strong>{npc.profile.name}</strong>
-                      <div className={styles.tableMeta}>{npc.profile.id}</div>
-                    </td>
-                    <td>{npc.profile.role}</td>
-                    <td>{npc.runtime.mood}</td>
-                    <td>{formatObjective(npc.runtime.objective)}</td>
-                    <td>{npc.runtime.position.x}, {npc.runtime.position.y}</td>
-                    <td>{npc.memories.slice(0, 2).join(" | ")}</td>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Mood</th>
+                    <th>Objective</th>
+                    <th>Memory trail</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {npcPagination.slice.map((npc) => (
+                    <tr key={npc.profile.id}>
+                      <td>
+                        <strong>{npc.profile.name}</strong>
+                        <div className={styles.tableMeta}>{npc.profile.id}</div>
+                      </td>
+                      <td>{npc.runtime.mood}</td>
+                      <td>{formatObjective(npc.runtime.objective)}</td>
+                      <td>{npc.memories.slice(0, 2).join(" | ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
 
-        {state.conversations.length > 0 && (
           <div className={styles.tableSection}>
             <div className={styles.tableSectionHeader}>
               <div>
                 <h3>Conversation metrics</h3>
-                <p>Generation time, turns, and LLM updates per conversation.</p>
+                <p>Generation time per conversation.</p>
               </div>
               <PaginationBar {...convPagination} />
             </div>
@@ -448,11 +437,8 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
                 <thead>
                   <tr>
                     <th>Participants</th>
-                    <th>Zone</th>
                     <th>Status</th>
-                    <th>Turns</th>
                     <th>Gen time</th>
-                    <th>LLM updates</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -460,15 +446,11 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
                     const genMs = conv.startedAtMs && conv.endedAtMs
                       ? ((conv.endedAtMs - conv.startedAtMs) / 1000).toFixed(1) + "s"
                       : conv.status === "generating" ? "…" : "—";
-                    const llmCount = conv.updates.filter((u) => u.source === "LLM_PACKAGE").length;
                     return (
                       <tr key={conv.id}>
                         <td><strong>{conv.participantNames.join(" + ")}</strong></td>
-                        <td>{conv.zoneId ?? "—"}</td>
-                        <td><span className={styles.badge}>{conv.status}</span></td>
-                        <td>{conv.generatedTurnCount}</td>
+                        <td><span className={statusBadgeClass(conv.status)}>{conv.status}</span></td>
                         <td>{genMs}</td>
-                        <td>{llmCount}</td>
                       </tr>
                     );
                   })}
@@ -476,27 +458,27 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
               </table>
             </div>
           </div>
-        )}
+        </div>
 
-        <div className={styles.tableSection}>
+        <div className={`${styles.dataBlock} ${styles.tableSection}`}>
           <div className={styles.tableSectionHeader}>
             <div>
               <h3>Conversation history</h3>
-              <p>Full dialogue, extracted memories, relationship changes, mood shifts, and new objectives.</p>
             </div>
+            <PaginationBar {...historyPagination} />
           </div>
-          <div className={styles.historyList}>
-            {state.conversations.length > 0 ? (
-              state.conversations.map((conversation) => (
-                <ConversationCard key={conversation.id} conversation={conversation} npcs={state.npcs} />
-              ))
-            ) : (
-              <p className={styles.placeholder}>No conversations yet. The simulation generates them automatically.</p>
-            )}
-          </div>
+          {state.conversations.length > 0 ? (
+            <div className={styles.historyGrid}>
+              {historyPagination.slice.map((conversation) => (
+                <ConversationCard key={conversation.id} conversation={conversation} />
+              ))}
+            </div>
+          ) : (
+            <p className={styles.placeholder}>No conversations yet. The simulation generates them automatically.</p>
+          )}
         </div>
 
-        <section className={styles.overridePanel} aria-label="Override actions">
+        <section className={`${styles.dataBlock} ${styles.overridePanel}`} aria-label="Override actions">
           <div className={styles.tableSectionHeader}>
             <div>
               <h3>Override actions</h3>
@@ -511,7 +493,7 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
           </div>
         </section>
 
-        <div className={styles.databaseGrid}>
+        <div className={`${styles.dataBlock} ${styles.databaseGrid}`}>
           {state.npcs.map((npc) => (
             <article key={npc.profile.id} className={styles.smallCard}>
               <div className={styles.smallCardHeader}>
@@ -540,14 +522,15 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
 }
 
 const PAGE_SIZE = 10;
+const CONV_PAGE_SIZE = 5;
 
-// Hook that slices an array into pages of PAGE_SIZE items and exposes safe page navigation.
+// Hook that slices an array into pages and exposes safe page navigation.
 // safePage clamps the current page index to prevent out-of-bound reads when the array shrinks.
-function usePagination<T>(items: T[]) {
+function usePagination<T>(items: T[], pageSize = PAGE_SIZE) {
   const [page, setPage] = useState(0);
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
-  const slice = items.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const slice = items.slice(safePage * pageSize, safePage * pageSize + pageSize);
   return { page: safePage, setPage, totalPages, slice };
 }
 
@@ -583,6 +566,13 @@ function PaginationBar({
 }
 
 // Small stat card displaying a text label and a bold value. Used in the top summary row.
+function statusBadgeClass(status: string): string {
+  if (status === "completed") return `${styles.badge} ${styles.badgeCompleted}`;
+  if (status === "generating") return `${styles.badge} ${styles.badgeGenerating}`;
+  if (status === "failed") return `${styles.badge} ${styles.badgeFailed}`;
+  return styles.badge;
+}
+
 function SummaryCard({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
     <article className={styles.summaryCard}>
@@ -684,7 +674,7 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
           <strong>{conversation.participantNames.join(" + ")}</strong>
           <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
         </div>
-        <span className={styles.badge}>{conversation.status}</span>
+        <span className={statusBadgeClass(conversation.status)}>{conversation.status}</span>
       </header>
       <p className={styles.conversationSummary}>{conversation.summary}</p>
       {llmCount > 0 && (
@@ -697,49 +687,11 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
   );
 }
 
-// Formats a single CharacterUpdate into a { label, detail, isLlm } triple for the history view.
-// Resolves participant names from IDs and humanises each update type for display.
-function formatUpdateDetail(
-  update: CharacterUpdate,
-  participantIds: [string, string],
-  participantNames: [string, string],
-  npcs: NpcState[],
-): { label: string; detail: string; isLlm: boolean } {
-  const idx = participantIds.indexOf(update.characterId);
-  const name = idx >= 0 ? participantNames[idx] : "?";
-  const isLlm = update.source === "LLM_PACKAGE";
-
-  switch (update.type) {
-    case "UPDATE_MOOD":
-      return { label: `${name} — mood`, detail: update.mood.toLowerCase(), isLlm };
-    case "UPDATE_OBJECTIVE": {
-      const goalType = update.objective.type === "GO_TO_LOCATION" ? "go to" : "idle";
-      return { label: `${name} — new goal`, detail: `${goalType}: ${update.objective.label}`, isLlm };
-    }
-    case "ADD_MEMORY":
-      return { label: `${name} — memory`, detail: update.memory, isLlm };
-    case "UPDATE_RELATIONSHIP": {
-      const target = npcs.find((n) => n.profile.id === update.targetCharacterId);
-      const targetName = target?.profile.name ?? update.targetCharacterId;
-      return {
-        label: `${name} → ${targetName}`,
-        detail: formatRelationship(update.relationship),
-        isLlm,
-      };
-    }
-  }
-}
 
 // Expanded conversation card used in the history view.
 // Shows the full dialogue transcript followed by two grouped update sections:
 // one for LLM-sourced extractions and one for classic-engine updates.
-function ConversationCard({
-  conversation,
-  npcs,
-}: Readonly<{ conversation: ConversationRecord; npcs: NpcState[] }>) {
-  const llmUpdates = conversation.updates.filter((u) => u.source === "LLM_PACKAGE");
-  const classicUpdates = conversation.updates.filter((u) => u.source === "CLASSIC_ENGINE");
-
+function ConversationCard({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   return (
     <article className={styles.conversationCard}>
       <header className={styles.conversationHeader}>
@@ -747,7 +699,7 @@ function ConversationCard({
           <strong>{conversation.participantNames.join(" + ")}</strong>
           <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
         </div>
-        <span className={styles.badge}>{conversation.status}</span>
+        <span className={statusBadgeClass(conversation.status)}>{conversation.status}</span>
       </header>
 
       <p className={styles.conversationSummary}>{conversation.summary}</p>
@@ -766,54 +718,6 @@ function ConversationCard({
               <span>{turn.message}</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {llmUpdates.length > 0 && (
-        <div className={styles.updatesSection}>
-          <p className={styles.updatesSectionLabel}>LLM extractions</p>
-          <div className={styles.updateRows}>
-            {llmUpdates.map((update, i) => {
-              const { label, detail } = formatUpdateDetail(
-                update,
-                conversation.participantIds,
-                conversation.participantNames,
-                npcs,
-              );
-              return (
-                <div key={`llm-${i}`} className={styles.updateRow}>
-                  <span className={styles.updateRowLabel}>{label}</span>
-                  <span className={styles.updateRowDetail}>{detail}</span>
-                  <span className={styles.updateRowTimestamp}>{update.timestamp}</span>
-                  <span className={`${styles.updateChip} ${styles.updateChipLlm}`}>LLM</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {classicUpdates.length > 0 && (
-        <div className={styles.updatesSection}>
-          <p className={styles.updatesSectionLabel}>Classic engine</p>
-          <div className={styles.updateRows}>
-            {classicUpdates.map((update, i) => {
-              const { label, detail } = formatUpdateDetail(
-                update,
-                conversation.participantIds,
-                conversation.participantNames,
-                npcs,
-              );
-              return (
-                <div key={`classic-${i}`} className={styles.updateRow}>
-                  <span className={styles.updateRowLabel}>{label}</span>
-                  <span className={styles.updateRowDetail}>{detail}</span>
-                  <span className={styles.updateRowTimestamp}>{update.timestamp}</span>
-                  <span className={`${styles.updateChip} ${styles.updateChipClassic}`}>Classic</span>
-                </div>
-              );
-            })}
-          </div>
         </div>
       )}
     </article>
@@ -885,30 +789,7 @@ function normalizeSavedState(state: DemoState): DemoState {
     { stampCooldownOnRelease: true },
   );
 
-  if (!state.activeConversationId) {
-    return baseState;
-  }
-
-  const completedAt = new Date().toISOString();
-
-  return reconcileConversationRuntime(
-    {
-      ...baseState,
-      activeConversationId: null,
-      conversations: state.conversations.map((conversation) => {
-        if (conversation.id !== state.activeConversationId) {
-          return conversation;
-        }
-
-        return {
-          ...conversation,
-          status: "failed",
-          endedAt: completedAt,
-        };
-      }),
-    },
-    { stampCooldownOnRelease: true },
-  );
+  return baseState;
 }
 
 // Type guard that verifies the persisted object has the correct schema version
@@ -960,7 +841,10 @@ function OverrideEventRow({ event }: Readonly<{ event: OverrideEvent }>) {
         <strong>{event.type}</strong>
         <p>{event.note}</p>
       </div>
-      <span>{event.source === "CLASSIC_ENGINE" ? "Classic" : "Package LLM"}</span>
+      <div className={styles.overrideItemMeta}>
+        <span>{event.source === "CLASSIC_ENGINE" ? "Classic" : "Package LLM"}</span>
+        <span className={styles.updateRowTimestamp}>{event.timestamp}</span>
+      </div>
     </article>
   );
 }

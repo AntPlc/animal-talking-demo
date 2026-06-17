@@ -171,9 +171,17 @@
 
 .contentBody {
   display: grid;
-  gap: 0.65rem;
+  gap: 1.75rem;
   align-content: start;
   overflow: visible;
+}
+
+.dataBlock {
+  border: 1px solid #dbe4ef;
+  border-top: 3px solid #cbd5e1;
+  border-radius: 0.85rem;
+  background: #f8fafc;
+  padding: 1.1rem 1.25rem;
 }
 
 .panelHeader {
@@ -510,6 +518,21 @@
   flex-shrink: 0;
 }
 
+.badgeCompleted {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.badgeGenerating {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badgeFailed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .placeholder {
   color: #64748b;
   font-size: 0.85rem;
@@ -521,6 +544,19 @@
   display: grid;
   gap: 0.5rem;
   align-content: start;
+}
+
+.historyGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .historyGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .logList {
@@ -550,16 +586,15 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 54rem;
 }
 
 .table th,
 .table td {
   text-align: left;
-  padding: 0.55rem 0.6rem;
+  padding: 0.45rem 0.5rem;
   border-bottom: 1px solid #e2e8f0;
   vertical-align: top;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
 .table tbody tr:last-child td {
@@ -778,6 +813,19 @@
   font-style: italic;
 }
 
+.tablesRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .tablesRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 .tableSection {
   display: grid;
   gap: 0.6rem;
@@ -851,10 +899,8 @@
 }
 
 .overridePanel {
-  border: 1px solid #dbe4ef;
-  border-radius: 0.75rem;
-  padding: 0.65rem;
-  background: #f8fafc;
+  display: grid;
+  gap: 0.6rem;
 }
 
 .overrideList {
@@ -884,6 +930,14 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.overrideItemMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  flex-shrink: 0;
 }
 
 .overrideClassic {
