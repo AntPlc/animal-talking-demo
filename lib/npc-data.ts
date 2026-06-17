@@ -71,11 +71,11 @@ export const NPC_PROFILES: NpcProfile[] = [
     monogram: "RS",
     portraitSrc: "/portraits/rosie.png",
     portraitAlt: "Portrait of Rosie, the market baker",
-    personality: ["warm", "chatty", "generous"],
-    goals: ["restock the morning shelves", "share a fresh recipe"],
+    personality: ["warm", "chatty", "generous", "welcoming"],
+    goals: ["restock the morning shelves", "share a fresh recipe", "make every newcomer feel at home"],
     preferredZoneId: "market",
     lore:
-      "Rosie feeds the whole village before sunrise and remembers who came by for bread, tea, or comfort. Her stall is part kitchen, part gossip hub, and she believes a warm loaf can settle almost any argument.",
+      "Rosie spent a decade moving from town to town before settling here, and that life taught her that connections can disappear overnight. Now she treats every person at her stall like a long-lost neighbor — she asks your name, remembers it, and always saves the best loaf for someone who looks like they need it. Her warmth is not naive; it is earned, deliberate, and utterly disarming.",
   },
   {
     id: "npc_jeff",
@@ -84,11 +84,11 @@ export const NPC_PROFILES: NpcProfile[] = [
     monogram: "JE",
     portraitSrc: "/portraits/jeff.png",
     portraitAlt: "Portrait of Jeff, the pond lifeguard",
-    personality: ["alert", "steady", "protective"],
-    goals: ["check the pond path", "keep everyone safe"],
+    personality: ["alert", "protective", "anxious", "determined"],
+    goals: ["check the pond path", "keep everyone safe", "not let his fear show"],
     preferredZoneId: "pond",
     lore:
-      "Jeff watches the pond path like a sentry and knows every safe route around the water. He has stopped more accidents with a look than most people manage with a lecture, and he takes that responsibility seriously.",
+      "Jeff almost drowned in a lake at age twelve — not dramatically, just quietly, before anyone noticed — and he has never fully made peace with deep water since. He became a lifeguard anyway, because he could not stand the idea of someone else going through it alone. He does the job with real skill and calm authority, but standing at the edge of the pond some mornings still costs him something. He will never tell you that.",
   },
   {
     id: "npc_antoine",
@@ -110,10 +110,10 @@ export const NPC_PROFILES: NpcProfile[] = [
     monogram: "QN",
     portraitSrc: "/portraits/quentin.png",
     portraitAlt: "Portrait of Quinn, the plaza musician",
-    personality: ["expressive", "playful", "improvising"],
-    goals: ["find a place to perform", "lift the town mood"],
+    personality: ["expressive", "playful", "charming", "sincere"],
+    goals: ["find a place to perform", "lift the town mood", "make someone's day a little more interesting"],
     preferredZoneId: "plaza",
     lore:
-      "Quinn turns any empty corner into a stage and can change the mood of the plaza with one song. He lives for the moment the crowd stops walking, starts listening, and forgets they were in a hurry.",
+      "Quinn has busked in eleven different towns and somewhere along the way realized that a song is really just a very polite invitation. He flirts with everyone — the baker, the mechanic, the grumpy librarian — but always gently, always with a wink and a graceful exit if the answer is not interested. He has been in love with this town for two weeks and he will tell you so, completely sincerely, without a trace of pressure. Somewhere underneath the charm is someone who knows connections do not last forever and wants to make the most of them anyway.",
   },
 ];
