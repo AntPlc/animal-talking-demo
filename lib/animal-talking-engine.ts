@@ -18,21 +18,24 @@ import {
   type TalkingCharacter,
 } from "animal-talking-core";
 
-import type {
-  CharacterUpdate,
-  DemoState,
-  DialogueTurn,
-  InteractionCandidate,
-  NpcMood,
-  NpcState,
-  RelationshipType as DemoRelationshipType,
-} from "./demo-state";
+import {
+  buildInteractionNotes,
+  conflictIdeaFor,
+  getConflictPair,
+} from "./conflict-pairs";
 import {
   buildConversation,
   formatTimestamp,
   formatWeather,
   getZoneById,
   objectiveForConversation,
+  type CharacterUpdate,
+  type DemoState,
+  type DialogueTurn,
+  type InteractionCandidate,
+  type NpcMood,
+  type NpcState,
+  type RelationshipType as DemoRelationshipType,
 } from "./demo-state";
 
 // ─── Mood mapping ─────────────────────────────────────────────────────────────
@@ -62,6 +65,17 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
   const relString = npc.relationships[otherId] ?? "STRANGER";
   // The package RelationshipType enum values equal the demo string union values.
   const packageRel = relString as unknown as RelationshipType;
+  const conflict = getConflictPair(npc.profile.id, otherId);
+  const conflictIdea = conflictIdeaFor(npc.profile.id, otherId);
+  const historyParts = [
+    `Known for being ${npc.profile.personality.join(", ")}.`,
+    ...npc.runtime.shortHistory.slice(0, 3),
+    ...npc.memories.slice(0, 2),
+  ];
+
+  if (conflict) {
+    historyParts.push(conflict.notes);
+  }
 
   return {
     id: npc.profile.id,
@@ -71,12 +85,9 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
     goals: npc.profile.goals,
     speakingStyle: npc.profile.personality.slice(0, 2).join(" and "),
     talkingState: {
-      idea: npc.profile.goals[0] ?? "explore",
+      idea: conflictIdea ?? npc.profile.goals[0] ?? "explore",
       objective: null,
-      history: [
-        `Known for being ${npc.profile.personality[0]}.`,
-        ...npc.runtime.shortHistory.slice(0, 3),
-      ].join(" "),
+      history: historyParts.join(" "),
       mood: demoMoodToPackageMood(npc.runtime.mood),
       knowledge: {
         [otherId]: {
@@ -200,6 +211,7 @@ export async function buildDemoDialogue(
     interactionContext: {
       locationZoneId: candidate.zoneId,
       reason: candidate.reason,
+      notes: buildInteractionNotes(first, second),
     },
     maxTurns: 4,
   };

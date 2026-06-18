@@ -540,11 +540,8 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
               <p>{npc.profile.personality.join(", ")}</p>
               <p>{npc.profile.goals.join(", ")}</p>
               <p>
-                Relationship sample:{" "}
-                {Object.values(npc.relationships)
-                  .slice(0, 2)
-                  .map((relation) => formatRelationship(relation))
-                  .join(", ")}
+                Relationships:{" "}
+                {formatNpcRelationships(npc, state.npcs)}
               </p>
             </article>
           ))}
@@ -864,6 +861,16 @@ function isSavedDemoState(
 }
 
 // Formats a millisecond duration as a zero-padded "MM:SS" string for the elapsed timer.
+function formatNpcRelationships(npc: NpcState, allNpcs: NpcState[]): string {
+  return Object.entries(npc.relationships)
+    .map(([targetId, relation]) => {
+      const target = allNpcs.find((other) => other.profile.id === targetId);
+      const name = target?.profile.name ?? targetId;
+      return `${name} → ${formatRelationship(relation)}`;
+    })
+    .join(", ");
+}
+
 function formatElapsed(valueMs: number): string {
   const totalSeconds = Math.floor(valueMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);

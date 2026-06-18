@@ -8,6 +8,7 @@ import {
   WANDER_INTERVAL,
   WEATHER_CHANGE_INTERVAL_TICKS,
 } from "./constants";
+import { applyConflictSeeding, isConflictPair } from "./conflict-pairs";
 import { NPC_PROFILES, type NpcProfile } from "./npc-data";
 import { findPathToGoal, nextPathStep } from "./pathfinder";
 
@@ -21,8 +22,10 @@ export type NpcMood = "CALM" | "CURIOUS" | "BUSY" | "EXCITED";
 
 export type RelationshipType =
   | "STRANGER"
+  | "DISLIKED"
   | "FRIEND"
   | "RIVAL"
+  | "ENEMY"
   | "FAMILY"
   | "ROMANTIC_INTEREST";
 
@@ -334,8 +337,21 @@ export function createInitialDemoState(): DemoState {
     activeConversationId: null,
   };
 
+  const seededState: DemoState = {
+    ...baseState,
+    npcs: applyConflictSeeding(
+      baseState.npcs.map((npc) => ({
+        ...npc,
+        memories: [
+          `Lives a quiet routine around the ${npc.profile.preferredZoneId}.`,
+          `Known for being ${npc.profile.personality[0]}.`,
+        ],
+      })),
+    ),
+  };
+
   // Use a fixed seed so server and client render identical initial positions.
-  return randomizeNpcPositions(baseState, 42);
+  return randomizeNpcPositions(seededState, 42);
 }
 
 // Moves every NPC currently frozen in "in_conversation" back to "idle".
@@ -666,11 +682,11 @@ function findApproachTarget(state: DemoState, nextNpcs: NpcState[], tick: number
   return nextNpcs;
 }
 
-// Hardcoded demo trigger: forces Tom (npc_tom) and Quinn (npc_quentin) into a
-// conversation regardless of their positions or cooldown state. Used for scripted demos.
+// Hardcoded demo trigger: forces Tom and Henry into a market rivalry conversation
+// regardless of their positions or cooldown state. Used for scripted demos.
 export function createScriptedInteraction(state: DemoState, reason: InteractionReason): InteractionCandidate | null {
   const first = state.npcs.find((npc) => npc.profile.id === "npc_tom");
-  const second = state.npcs.find((npc) => npc.profile.id === "npc_quentin");
+  const second = state.npcs.find((npc) => npc.profile.id === "npc_henri");
 
   if (!first || !second) {
     return null;
@@ -1756,13 +1772,26 @@ export function objectiveForConversation(
 }
 
 // Determines the relationship to assign after a conversation ends.
-// SAME_ZONE meetings always promote to FRIEND; otherwise existing relationships are preserved
-// (strangers become friends, non-strangers keep their current status).
+// Conflict pairs keep (or worsen) negative arcs; friendly pairs still warm up over time.
 function relationAfterConversation(
   source: NpcState,
   target: NpcState,
   reason: InteractionReason,
 ): RelationshipType {
+  const current = source.relationships[target.profile.id] ?? "STRANGER";
+
+  if (isConflictPair(source.profile.id, target.profile.id)) {
+    if (current === "DISLIKED" && reason === "SAME_ZONE") {
+      return "RIVAL";
+    }
+
+    if (current === "RIVAL" && reason === "SAME_ZONE") {
+      return "RIVAL";
+    }
+
+    return current;
+  }
+
   if (reason === "SAME_ZONE") {
     return "FRIEND";
   }
@@ -1771,9 +1800,7 @@ function relationAfterConversation(
     return "FRIEND";
   }
 
-  return source.relationships[target.profile.id] === "STRANGER"
-    ? "FRIEND"
-    : source.relationships[target.profile.id];
+  return current === "STRANGER" ? "FRIEND" : current;
 }
 
 // Converts the CharacterUpdates from a finished conversation into OverrideEvent records

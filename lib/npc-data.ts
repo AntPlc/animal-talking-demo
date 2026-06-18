@@ -33,7 +33,7 @@ export const NPC_PROFILES: NpcProfile[] = [
     monogram: "TM",
     portraitSrc: "/portraits/tom.png",
     portraitAlt: "Portrait of Tom, the market shopkeeper",
-    personality: ["welcoming", "business-minded", "calm"],
+    personality: ["welcoming", "business-minded", "territorial", "proud"],
     goals: ["keep the boutique stocked", "help residents find the right item"],
     preferredZoneId: "market",
     lore:
@@ -72,7 +72,7 @@ export const NPC_PROFILES: NpcProfile[] = [
     monogram: "HE",
     portraitSrc: "/portraits/henri.png",
     portraitAlt: "Portrait of Henry, the market mechanic",
-    personality: ["precise", "dry", "focused"],
+    personality: ["precise", "dry", "focused", "proud", "competitive"],
     goals: ["inspect broken tools", "help with repairs"],
     preferredZoneId: "market",
     lore:

@@ -46,8 +46,8 @@ export const GENERATION_DELAY_MS =
 // ---------------------------------------------------------------------------
 
 // localStorage key — bump the version suffix whenever the DemoState schema changes.
-export const STORAGE_KEY = "animal-talking-demo-state-v5";
-export const STORAGE_VERSION = 5;
+export const STORAGE_KEY = "animal-talking-demo-state-v6";
+export const STORAGE_VERSION = 6;
 
 // sessionStorage keys used to distinguish a hard refresh from a normal reload.
 export const SESSION_KEY = "animal-talking-session-v4";
