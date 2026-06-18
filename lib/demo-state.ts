@@ -42,6 +42,12 @@ export type NpcObjective =
       label: string;
     };
 
+export interface NpcTrackedObjective {
+  id: string;
+  description: string;
+  status: "active" | "fulfilled";
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -78,6 +84,7 @@ export interface NpcState {
   runtime: NpcRuntimeState;
   relationships: Record<string, RelationshipType>;
   memories: string[];
+  objectives: NpcTrackedObjective[];
 }
 
 export interface DialogueTurn {
@@ -122,6 +129,22 @@ export type CharacterUpdate =
       note: string;
       source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
       timestamp: string;
+    }
+  | {
+      type: "ADD_OBJECTIVE";
+      characterId: string;
+      objective: NpcTrackedObjective;
+      note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
+    }
+  | {
+      type: "FULFILL_OBJECTIVE";
+      characterId: string;
+      objectiveId: string;
+      note: string;
+      source: "CLASSIC_ENGINE" | "LLM_PACKAGE";
+      timestamp: string;
     };
 
 export interface OverrideEvent {
@@ -158,6 +181,20 @@ export interface NpcFieldSources {
   objective: UpdateSource | null;
   memories: Record<string, UpdateSource>;
   relationships: Record<string, UpdateSource>;
+  objectives: Record<string, UpdateSource>;
+}
+
+export interface RelationshipChangeEntry {
+  id: string;
+  conversationId: string;
+  participants: [string, string];
+  characterId: string;
+  characterName: string;
+  targetCharacterId: string;
+  targetName: string;
+  relationship: RelationshipType;
+  timestamp: string;
+  source: UpdateSource;
 }
 
 export interface DemoState {
@@ -332,6 +369,7 @@ export function createInitialDemoState(): DemoState {
       },
       relationships,
       memories: [],
+      objectives: [],
     };
   });
 
@@ -951,7 +989,7 @@ export function buildConversation(
       type: "UPDATE_OBJECTIVE",
       characterId: first.profile.id,
       objective: firstObjective,
-      note: `${first.profile.name}: goal → ${firstObjective.label}`,
+      note: `${first.profile.name}: objective → ${firstObjective.label}`,
       source: "CLASSIC_ENGINE",
       timestamp: ts,
     },
@@ -959,7 +997,7 @@ export function buildConversation(
       type: "UPDATE_OBJECTIVE",
       characterId: second.profile.id,
       objective: secondObjective,
-      note: `${second.profile.name}: goal → ${secondObjective.label}`,
+      note: `${second.profile.name}: objective → ${secondObjective.label}`,
       source: "CLASSIC_ENGINE",
       timestamp: ts,
     },
@@ -991,6 +1029,7 @@ export function applyConversationUpdates(
     let nextRuntime = { ...npc.runtime };
     let nextRelationships = { ...npc.relationships };
     const nextMemories = [...npc.memories];
+    let nextObjectives = [...npc.objectives];
 
     for (const update of npcUpdates) {
       if (update.type === "UPDATE_MOOD") {
@@ -1023,6 +1062,18 @@ export function applyConversationUpdates(
           [update.targetCharacterId]: update.relationship,
         };
       }
+
+      if (update.type === "ADD_OBJECTIVE") {
+        if (!nextObjectives.some((objective) => objective.id === update.objective.id)) {
+          nextObjectives = [update.objective, ...nextObjectives];
+        }
+      }
+
+      if (update.type === "FULFILL_OBJECTIVE") {
+        nextObjectives = nextObjectives.map((objective) =>
+          objective.id === update.objectiveId ? { ...objective, status: "fulfilled" as const } : objective,
+        );
+      }
     }
 
     if (npcUpdates.length > 0 && nextRuntime.status === "in_conversation") {
@@ -1038,6 +1089,7 @@ export function applyConversationUpdates(
       runtime: nextRuntime,
       relationships: nextRelationships,
       memories: nextMemories.slice(0, 10),
+      objectives: nextObjectives,
     };
   });
 }
@@ -1062,6 +1114,10 @@ export function formatRelationship(value: RelationshipType): string {
     .split("_")
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+export function formatTrackedObjectiveStatus(status: NpcTrackedObjective["status"]): string {
+  return status === "active" ? "Active" : "Fulfilled";
 }
 
 export function getNpcById(state: DemoState, id: string): NpcState | undefined {
@@ -1107,7 +1163,7 @@ export function getDemoProfiles(): NpcProfile[] {
 }
 
 // Merges a persisted NPC snapshot with the latest static profile from NPC_PROFILES.
-// Prevents stale lore, goal text, or missing fields from a previous localStorage version
+// Prevents stale lore, objective text, or missing fields from a previous localStorage version
 // from carrying over into the running simulation.
 export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   const profile = NPC_PROFILES.find((entry) => entry.id === savedNpc.profile.id) ?? savedNpc.profile;
@@ -1122,6 +1178,10 @@ export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
   return {
     ...savedNpc,
     profile,
+    objectives:
+      savedNpc.objectives ??
+      (savedNpc as NpcState & { activeGoals?: NpcTrackedObjective[] }).activeGoals ??
+      [],
     memories: [...seedMemories, ...conversationMemories].slice(0, 10),
     runtime: {
       ...savedNpc.runtime,
@@ -1515,7 +1575,7 @@ function followUpLine(
 }
 
 // Generates the fourth and final line of the conversation (second NPC wraps up).
-// References both NPCs' next objectives to tie the dialogue back to their goals.
+// References both NPCs' next objectives to tie the dialogue back to their hobbies.
 function closingLine(
   speaker: NpcState,
   other: NpcState,
@@ -1843,6 +1903,7 @@ export function buildNpcFieldSources(
     objective: null,
     memories: {},
     relationships: {},
+    objectives: {},
   };
 
   for (const conversation of conversations) {
@@ -1868,10 +1929,52 @@ export function buildNpcFieldSources(
         case "UPDATE_RELATIONSHIP":
           result.relationships[update.targetCharacterId] = update.source;
           break;
+        case "ADD_OBJECTIVE":
+          result.objectives[update.objective.id] = update.source;
+          break;
+        case "FULFILL_OBJECTIVE":
+          result.objectives[update.objectiveId] = update.source;
+          break;
       }
     }
   }
 
   return result;
+}
+
+// Collects relationship updates from completed conversations for the relationship journal.
+export function collectRelationshipChanges(
+  conversations: ConversationRecord[],
+  npcs: NpcState[],
+): RelationshipChangeEntry[] {
+  const nameById = new Map(npcs.map((npc) => [npc.profile.id, npc.profile.name]));
+  const entries: RelationshipChangeEntry[] = [];
+
+  for (const conversation of conversations) {
+    if (conversation.status !== "completed") {
+      continue;
+    }
+
+    for (const [index, update] of conversation.updates.entries()) {
+      if (update.type !== "UPDATE_RELATIONSHIP") {
+        continue;
+      }
+
+      entries.push({
+        id: `${conversation.id}-rel-${index}`,
+        conversationId: conversation.id,
+        participants: conversation.participantNames,
+        characterId: update.characterId,
+        characterName: nameById.get(update.characterId) ?? update.characterId,
+        targetCharacterId: update.targetCharacterId,
+        targetName: nameById.get(update.targetCharacterId) ?? update.targetCharacterId,
+        relationship: update.relationship,
+        timestamp: update.timestamp,
+        source: update.source,
+      });
+    }
+  }
+
+  return entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 

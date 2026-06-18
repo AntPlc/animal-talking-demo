@@ -929,6 +929,19 @@ details[open] > .convDetailsSummary::before {
   gap: 0.3rem;
 }
 
+.updateGroupLabel {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin: 0.35rem 0 0;
+}
+
+.updateGroupLabel:first-child {
+  margin-top: 0;
+}
+
 .updateRow {
   display: flex;
   align-items: baseline;

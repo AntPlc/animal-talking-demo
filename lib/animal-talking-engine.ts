@@ -83,6 +83,7 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
     name: npc.profile.name,
     role: npc.profile.role,
     personalityTraits: npc.profile.personality,
+    // animal-talking-core still names this field "goals"; demo profiles use hobbies.
     goals: npc.profile.hobbies,
     speakingStyle: npc.profile.personality.slice(0, 2).join(" and "),
     talkingState: {
@@ -101,7 +102,7 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
           relationship: packageRel,
         },
       },
-      activeGoals: [],
+      activeGoals: npc.objectives ?? [],
     },
   };
 }
@@ -111,6 +112,41 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
 // The provider receives the real prompt built by PromptBuilder but ignores it —
 // instead it returns a pre-built JSON based on the deterministic template engine.
 // This keeps the demo self-contained while exercising the full package pipeline.
+
+function demoUpdateToPackageUpdate(
+  update: CharacterUpdate,
+  firstId: string,
+  secondId: string,
+): Record<string, unknown> | null {
+  if (update.type === "UPDATE_MOOD") {
+    return {
+      type: "UPDATE_MOOD",
+      characterId: update.characterId,
+      mood: demoMoodToPackageMood(update.mood),
+    };
+  }
+
+  if (update.type === "ADD_MEMORY") {
+    const targetCharacterId = update.characterId === firstId ? secondId : firstId;
+    return {
+      type: "ADD_MEMORY",
+      characterId: update.characterId,
+      targetCharacterId,
+      memory: { id: "", content: update.memory, createdAt: "" },
+    };
+  }
+
+  if (update.type === "UPDATE_RELATIONSHIP") {
+    return {
+      type: "UPDATE_RELATIONSHIP",
+      characterId: update.characterId,
+      targetCharacterId: update.targetCharacterId,
+      relationship: update.relationship,
+    };
+  }
+
+  return null;
+}
 
 function buildMockLlmJson(
   first: NpcState,
@@ -129,41 +165,9 @@ function buildMockLlmJson(
     mood: demoMoodToPackageMood(t.mood ?? "CALM"),
   }));
 
-  const pairTone = candidate.reason === "SAME_ZONE" ? "shared the same spot" : "met by chance";
-  const location = candidate.zoneId
-    ? (getZoneById(state.zones, candidate.zoneId)?.name ?? "the street")
-    : "the street";
-  const timeLabel = `${state.worldTime.hour.toString().padStart(2, "0")}:${state.worldTime.minute
-    .toString()
-    .padStart(2, "0")}`;
-
-  const firstMemory = `${first.profile.name} and ${second.profile.name} ${pairTone} at ${location} around ${timeLabel}.`;
-  const secondMemory = `${second.profile.name} and ${first.profile.name} ${pairTone} at ${location} around ${timeLabel}.`;
-
-  // Extract mood and relationship from the demo's buildConversation result
-  const firstMoodUp  = dialogue.updates.find((u) => u.type === "UPDATE_MOOD" && u.characterId === first.profile.id) as Extract<CharacterUpdate, { type: "UPDATE_MOOD" }> | undefined;
-  const secondMoodUp = dialogue.updates.find((u) => u.type === "UPDATE_MOOD" && u.characterId === second.profile.id) as Extract<CharacterUpdate, { type: "UPDATE_MOOD" }> | undefined;
-  const firstRelUp   = dialogue.updates.find((u) => u.type === "UPDATE_RELATIONSHIP" && u.characterId === first.profile.id) as Extract<CharacterUpdate, { type: "UPDATE_RELATIONSHIP" }> | undefined;
-  const secondRelUp  = dialogue.updates.find((u) => u.type === "UPDATE_RELATIONSHIP" && u.characterId === second.profile.id) as Extract<CharacterUpdate, { type: "UPDATE_RELATIONSHIP" }> | undefined;
-
-  const updates = [
-    firstMoodUp  && { type: "UPDATE_MOOD", characterId: first.profile.id,  mood: demoMoodToPackageMood(firstMoodUp.mood) },
-    secondMoodUp && { type: "UPDATE_MOOD", characterId: second.profile.id, mood: demoMoodToPackageMood(secondMoodUp.mood) },
-    {
-      type: "ADD_MEMORY",
-      characterId: first.profile.id,
-      targetCharacterId: second.profile.id,
-      memory: { id: "", content: firstMemory, createdAt: "" },
-    },
-    {
-      type: "ADD_MEMORY",
-      characterId: second.profile.id,
-      targetCharacterId: first.profile.id,
-      memory: { id: "", content: secondMemory, createdAt: "" },
-    },
-    firstRelUp  && { type: "UPDATE_RELATIONSHIP", characterId: first.profile.id,  targetCharacterId: second.profile.id, relationship: firstRelUp.relationship },
-    secondRelUp && { type: "UPDATE_RELATIONSHIP", characterId: second.profile.id, targetCharacterId: first.profile.id,  relationship: secondRelUp.relationship },
-  ].filter(Boolean);
+  const updates = dialogue.updates
+    .map((update) => demoUpdateToPackageUpdate(update, first.profile.id, second.profile.id))
+    .filter((update): update is Record<string, unknown> => update !== null);
 
   return JSON.stringify({ turns, updates });
 }
@@ -279,8 +283,27 @@ export async function buildDemoDialogue(
         source: "LLM_PACKAGE",
         timestamp: ts,
       });
+    } else if (update.type === "ADD_GOAL") {
+      const npcName = update.characterId === first.profile.id ? first.profile.name : second.profile.name;
+      updates.push({
+        type: "ADD_OBJECTIVE",
+        characterId: update.characterId,
+        objective: update.goal,
+        note: `${npcName}: objective added → "${update.goal.description}"`,
+        source: "LLM_PACKAGE",
+        timestamp: ts,
+      });
+    } else if (update.type === "FULFILL_GOAL") {
+      const npcName = update.characterId === first.profile.id ? first.profile.name : second.profile.name;
+      updates.push({
+        type: "FULFILL_OBJECTIVE",
+        characterId: update.characterId,
+        objectiveId: update.goalId,
+        note: `${npcName}: objective fulfilled → ${update.goalId}`,
+        source: "LLM_PACKAGE",
+        timestamp: ts,
+      });
     }
-    // APPEND_HISTORY, ADD_GOAL, FULFILL_GOAL are not part of the demo's CharacterUpdate type.
   }
 
   // Objective updates are the demo's own logic (no label field in package's NpcObjective).
@@ -291,7 +314,7 @@ export async function buildDemoDialogue(
     type: "UPDATE_OBJECTIVE",
     characterId: first.profile.id,
     objective: firstObjective,
-    note: `${first.profile.name}: goal → ${firstObjective.label}`,
+    note: `${first.profile.name}: objective → ${firstObjective.label}`,
     source: "CLASSIC_ENGINE",
     timestamp: ts,
   });
@@ -300,7 +323,7 @@ export async function buildDemoDialogue(
     type: "UPDATE_OBJECTIVE",
     characterId: second.profile.id,
     objective: secondObjective,
-    note: `${second.profile.name}: goal → ${secondObjective.label}`,
+    note: `${second.profile.name}: objective → ${secondObjective.label}`,
     source: "CLASSIC_ENGINE",
     timestamp: ts,
   });

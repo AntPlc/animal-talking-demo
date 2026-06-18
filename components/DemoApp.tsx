@@ -18,10 +18,12 @@ import {
 import {
   advanceDemoState,
   buildNpcFieldSources,
+  collectRelationshipChanges,
   createInitialDemoState,
   findInteractionCandidate,
   finishInteraction,
   finishInteractionWithDialogue,
+  formatTrackedObjectiveStatus,
   formatObjective,
   formatRelationship,
   formatTimestamp,
@@ -35,6 +37,7 @@ import {
   randomizeNpcPositions,
   reconcileConversationRuntime,
   startInteraction,
+  type CharacterUpdate,
   type ConversationRecord,
   type DemoState,
   type DemoView,
@@ -43,6 +46,7 @@ import {
   type NpcState,
   type NpcFieldSources,
   type OverrideEvent,
+  type RelationshipChangeEntry,
   type UpdateSource,
 } from "@/lib/demo-state";
 import { buildDemoDialogue } from "@/lib/animal-talking-engine";
@@ -406,6 +410,11 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   const convPagination = usePagination(state.conversations);
   const overridePagination = usePagination(state.recentOverrides);
   const historyPagination = usePagination(state.conversations, CONV_PAGE_SIZE);
+  const relationshipChanges = useMemo(
+    () => collectRelationshipChanges(state.conversations, state.npcs),
+    [state.conversations, state.npcs],
+  );
+  const relationshipPagination = usePagination(relationshipChanges);
 
   const npcFieldSources = useMemo(() => {
     const map = new Map<string, NpcFieldSources>();
@@ -535,6 +544,25 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
               <OverrideEventRow key={event.id} event={event} />
             ))}
           </div>
+        </section>
+
+        <section className={`${styles.dataBlock} ${styles.overridePanel}`} aria-label="Relationship changes">
+          <div className={styles.tableSectionHeader}>
+            <div>
+              <h3>Relationship changes</h3>
+              <p>Transitions extracted from conversation history.</p>
+            </div>
+            <PaginationBar {...relationshipPagination} />
+          </div>
+          {relationshipChanges.length > 0 ? (
+            <div className={styles.overrideList}>
+              {relationshipPagination.slice.map((entry) => (
+                <RelationshipChangeRow key={entry.id} entry={entry} />
+              ))}
+            </div>
+          ) : (
+            <p className={styles.placeholder}>No relationship changes yet.</p>
+          )}
         </section>
 
         <section className={styles.dataBlock} aria-label="Character profiles">
@@ -744,6 +772,30 @@ function NpcProfileCard({
         </details>
         <details className={styles.npcSection}>
           <summary className={styles.npcSectionSummary}>
+            Objectives ({npc.objectives.length})
+          </summary>
+          <div className={styles.npcSectionBody}>
+            {npc.objectives.length > 0 ? (
+              <ul className={styles.goalList}>
+                {npc.objectives.map((objective) => (
+                  <li
+                    key={objective.id}
+                    className={`${styles.memoryRow} ${fieldSourceClass(fieldSources.objectives[objective.id])}`}
+                  >
+                    <span>{objective.description}</span>
+                    <span className={`${styles.badge} ${fieldSourceClass(fieldSources.objectives[objective.id])}`}>
+                      {formatTrackedObjectiveStatus(objective.status)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={styles.placeholder}>No objectives yet.</p>
+            )}
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>
             Memories ({npc.memories.length})
           </summary>
           <div className={styles.npcSectionBody}>
@@ -864,6 +916,14 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
       {llmCount > 0 && (
         <p className={styles.llmTag}>{llmCount} LLM update{llmCount > 1 ? "s" : ""} applied</p>
       )}
+      {conversation.updates.length > 0 && (
+        <details className={styles.convDetails}>
+          <summary className={styles.convDetailsSummary}>
+            {conversation.updates.length} update{conversation.updates.length > 1 ? "s" : ""}
+          </summary>
+          <ConversationUpdatesSection updates={conversation.updates} />
+        </details>
+      )}
       {conversation.status === "failed" && (
         <p className={styles.failedNote}>Interrupted by page reload — generation was lost.</p>
       )}
@@ -905,6 +965,10 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
             </div>
           ))}
         </div>
+      )}
+
+      {conversation.updates.length > 0 && (
+        <ConversationUpdatesSection updates={conversation.updates} />
       )}
     </article>
   );
@@ -1031,6 +1095,72 @@ function OverrideEventRow({ event }: Readonly<{ event: OverrideEvent }>) {
         <span className={styles.updateRowTimestamp}>{event.timestamp}</span>
       </div>
     </article>
+  );
+}
+
+function RelationshipChangeRow({ entry }: Readonly<{ entry: RelationshipChangeEntry }>) {
+  return (
+    <article
+      className={`${styles.overrideItem} ${entry.source === "CLASSIC_ENGINE" ? styles.overrideClassic : styles.overrideLlm}`}
+    >
+      <div>
+        <strong>
+          {entry.characterName} → {entry.targetName}
+        </strong>
+        <p>{formatRelationship(entry.relationship)}</p>
+      </div>
+      <div className={styles.overrideItemMeta}>
+        <span>{entry.participants.join(" + ")}</span>
+        <span className={styles.updateRowTimestamp}>{entry.timestamp}</span>
+      </div>
+    </article>
+  );
+}
+
+function updateSourceChipClass(source: UpdateSource): string {
+  return source === "CLASSIC_ENGINE" ? styles.updateChipClassic : styles.updateChipLlm;
+}
+
+function updateSourceLabel(source: UpdateSource): string {
+  return source === "CLASSIC_ENGINE" ? "Classic" : "Package LLM";
+}
+
+function ConversationUpdatesSection({ updates }: Readonly<{ updates: CharacterUpdate[] }>) {
+  const llmUpdates = updates.filter((update) => update.source === "LLM_PACKAGE");
+  const classicUpdates = updates.filter((update) => update.source === "CLASSIC_ENGINE");
+
+  return (
+    <div className={styles.updateRows}>
+      {llmUpdates.length > 0 && (
+        <>
+          <p className={styles.updateGroupLabel}>Package LLM</p>
+          {llmUpdates.map((update, index) => (
+            <UpdateRow key={`llm-${update.type}-${update.characterId}-${index}`} update={update} />
+          ))}
+        </>
+      )}
+      {classicUpdates.length > 0 && (
+        <>
+          <p className={styles.updateGroupLabel}>Classic engine</p>
+          {classicUpdates.map((update, index) => (
+            <UpdateRow key={`classic-${update.type}-${update.characterId}-${index}`} update={update} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function UpdateRow({ update }: Readonly<{ update: CharacterUpdate }>) {
+  return (
+    <div className={styles.updateRow}>
+      <span className={styles.updateRowLabel}>{update.type}</span>
+      <span className={styles.updateRowDetail}>{update.note}</span>
+      <span className={`${styles.updateChip} ${updateSourceChipClass(update.source)}`}>
+        {updateSourceLabel(update.source)}
+      </span>
+      <span className={styles.updateRowTimestamp}>{update.timestamp}</span>
+    </div>
   );
 }
 
