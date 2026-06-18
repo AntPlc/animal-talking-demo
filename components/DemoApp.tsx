@@ -10,8 +10,10 @@ import {
   createInitialDemoState,
   findInteractionCandidate,
   finishInteraction,
+  finishInteractionWithDialogue,
   formatObjective,
   formatRelationship,
+  formatTimestamp,
   formatWeather,
   formatWorldTime,
   getGridHeight,
@@ -30,6 +32,7 @@ import {
   type NpcState,
   type OverrideEvent,
 } from "@/lib/demo-state";
+import { buildDemoDialogue } from "@/lib/animal-talking-engine";
 
 const STORAGE_KEY = "animal-talking-demo-state-v5";
 const STORAGE_VERSION = 5;
@@ -64,6 +67,9 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<number | null>(null);
   const simulationStartRef = useRef(Date.now());
+  // Always-current state snapshot used inside setTimeout callbacks to avoid stale closures.
+  const stateRef = useRef<DemoState>(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
 
   useEffect(() => {
@@ -162,9 +168,21 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
     const elapsed = activeConversation.startedAtMs ? Date.now() - activeConversation.startedAtMs : 0;
     const remainingMs = Math.max(0, GENERATION_DELAY_MS - elapsed);
     timerRef.current = window.setTimeout(() => {
-      setState((current) => finishInteraction(current, candidate));
-      setPendingCandidate(null);
-      timerRef.current = null;
+      const snap = stateRef.current;
+      const [firstId, secondId] = candidate.participantIds;
+      const first = snap.npcs.find((n) => n.profile.id === firstId);
+      const second = snap.npcs.find((n) => n.profile.id === secondId);
+      const wallTime = formatTimestamp(new Date());
+      void (async () => {
+        if (first && second) {
+          const dialogue = await buildDemoDialogue(first, second, snap, candidate, wallTime);
+          setState((s) => finishInteractionWithDialogue(s, candidate, dialogue));
+        } else {
+          setState((s) => finishInteraction(s, candidate));
+        }
+        setPendingCandidate(null);
+        timerRef.current = null;
+      })();
     }, remainingMs);
   }, [isHydrated, pendingCandidate, state.activeConversationId, state.conversations]);
 
@@ -201,9 +219,21 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
       setState((current) => startInteraction(current, candidate));
 
       timerRef.current = window.setTimeout(() => {
-        setState((current) => finishInteraction(current, candidate));
-        setPendingCandidate(null);
-        timerRef.current = null;
+        const snap = stateRef.current;
+        const [firstId, secondId] = candidate.participantIds;
+        const first = snap.npcs.find((n) => n.profile.id === firstId);
+        const second = snap.npcs.find((n) => n.profile.id === secondId);
+        const wallTime = formatTimestamp(new Date());
+        void (async () => {
+          if (first && second) {
+            const dialogue = await buildDemoDialogue(first, second, snap, candidate, wallTime);
+            setState((s) => finishInteractionWithDialogue(s, candidate, dialogue));
+          } else {
+            setState((s) => finishInteraction(s, candidate));
+          }
+          setPendingCandidate(null);
+          timerRef.current = null;
+        })();
       }, GENERATION_DELAY_MS);
     },
     [],
@@ -362,11 +392,9 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   );
 
   const npcPagination = usePagination(state.npcs);
-  const reversedConversations = [...state.conversations].reverse();
-  const convPagination = usePagination(reversedConversations);
-  const reversedOverrides = [...state.recentOverrides].reverse();
-  const overridePagination = usePagination(reversedOverrides);
-  const historyPagination = usePagination(reversedConversations, CONV_PAGE_SIZE);
+  const convPagination = usePagination(state.conversations);
+  const overridePagination = usePagination(state.recentOverrides);
+  const historyPagination = usePagination(state.conversations, CONV_PAGE_SIZE);
 
   return (
     <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Data">
@@ -694,7 +722,9 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
       <header className={styles.conversationHeader}>
         <div>
           <strong>{conversation.participantNames.join(" + ")}</strong>
-          <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
+          <p className={styles.updateRowTimestamp}>
+            {conversation.startedAtMs ? formatTimestamp(new Date(conversation.startedAtMs)) : conversation.startedAt}
+          </p>
         </div>
         <span className={statusBadgeClass(conversation.status)}>{conversation.status}</span>
       </header>

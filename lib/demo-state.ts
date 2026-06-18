@@ -204,7 +204,7 @@ const BASE_ZONES: WorldZone[] = [
 ];
 
 const OBJECTIVE_BY_ROLE: Record<string, NpcObjective> = {
-  curator: { type: "GO_TO_LOCATION", targetZoneId: "library", label: "Review the archive" },
+  shopkeeper: { type: "GO_TO_LOCATION", targetZoneId: "market", label: "Open the boutique" },
   gardener: { type: "GO_TO_LOCATION", targetZoneId: "park", label: "Check the garden beds" },
   scout: { type: "GO_TO_LOCATION", targetZoneId: "plaza", label: "Gather town news" },
   mechanic: { type: "GO_TO_LOCATION", targetZoneId: "market", label: "Inspect the repair stall" },
@@ -769,6 +769,44 @@ export function finishInteraction(
       return {
         ...conversation,
         status: "completed",
+        generatedTurnCount: dialogue.turns.length,
+        turns: dialogue.turns,
+        updates: dialogue.updates,
+        summary: dialogue.summary,
+        endedAt: completedAt,
+        endedAtMs,
+      };
+    }),
+    npcs: applyConversationUpdates(state.npcs, dialogue.updates, state.tick, state.zones),
+    recentOverrides: registerOverrideEvents(state.recentOverrides, dialogue.updates, state.tick),
+  };
+}
+
+// Stamps an active conversation as completed using pre-computed dialogue (e.g. from the
+// AnimalTalkingEngine), applies all character updates, and appends override events.
+// Use this in async flows where dialogue is built outside of the setState updater.
+export function finishInteractionWithDialogue(
+  state: DemoState,
+  candidate: InteractionCandidate,
+  dialogue: { turns: DialogueTurn[]; updates: CharacterUpdate[]; summary: string },
+): DemoState {
+  if (!state.activeConversationId) {
+    return reconcileConversationRuntime(state);
+  }
+
+  const endedAtMs = Date.now();
+  const completedAt = toIsoTimestamp(state.worldTime);
+
+  return {
+    ...state,
+    activeConversationId: null,
+    conversations: state.conversations.map((conversation) => {
+      if (conversation.id !== state.activeConversationId) {
+        return conversation;
+      }
+      return {
+        ...conversation,
+        status: "completed" as const,
         generatedTurnCount: dialogue.turns.length,
         turns: dialogue.turns,
         updates: dialogue.updates,
@@ -1700,7 +1738,7 @@ function moodFromContext(role: string, weather: Weather, hour: number): NpcMood 
 
 // Picks the post-conversation objective for an NPC.
 // Prefers the zone where the conversation happened; falls back to the NPC's role default.
-function objectiveForConversation(
+export function objectiveForConversation(
   npc: NpcState,
   state: DemoState,
   zoneId: string | null,
