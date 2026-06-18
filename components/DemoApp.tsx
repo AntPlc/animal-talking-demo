@@ -67,13 +67,9 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
 
 
   useEffect(() => {
-    // Detect hard refresh: sessionStorage has no marker → Shift+F5 or new tab.
-    // On normal F5 the marker survives, so we keep the saved state untouched.
-    const isHardRefresh = typeof sessionStorage !== "undefined" && !sessionStorage.getItem(SESSION_KEY);
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.setItem(SESSION_KEY, "1");
-    }
-
+    const isHardRefresh = !sessionStorage.getItem(SESSION_KEY);
+    sessionStorage.setItem(SESSION_KEY, "1");
+  
     if (isHardRefresh) {
       const startMs = Date.now();
       sessionStorage.setItem(SESSION_START_KEY, String(startMs));
@@ -92,7 +88,7 @@ export function DemoApp({ view }: Readonly<{ view: DemoView }>) {
         setState(normalizeSavedState(saved));
       }
     }
-
+  
     setIsHydrated(true);
   }, []);
 
