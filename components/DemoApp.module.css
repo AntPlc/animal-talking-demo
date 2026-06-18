@@ -755,6 +755,56 @@ details[open] > .npcSectionSummary::before {
   color: #334155;
 }
 
+.fieldValue {
+  display: inline-block;
+  border-radius: 0.45rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.memoryRow {
+  position: relative;
+  padding-left: 0.85rem;
+  color: #334155;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+}
+
+.memoryRow::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: #94a3b8;
+}
+
+.fieldClassic {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.fieldLlm {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.relationshipRow.fieldClassic,
+.relationshipRow.fieldLlm {
+  padding: 0.3rem 0.4rem;
+  border-width: 1px;
+  border-style: solid;
+}
+
+.badge.fieldClassic,
+.badge.fieldLlm {
+  border: 1px solid;
+}
+
 .smallCardHeader {
   display: flex;
   align-items: center;

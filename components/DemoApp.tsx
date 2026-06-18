@@ -17,6 +17,7 @@ import {
 } from "@/lib/constants";
 import {
   advanceDemoState,
+  buildNpcFieldSources,
   createInitialDemoState,
   findInteractionCandidate,
   finishInteraction,
@@ -40,7 +41,9 @@ import {
   type InteractionCandidate,
   type NpcProfile,
   type NpcState,
+  type NpcFieldSources,
   type OverrideEvent,
+  type UpdateSource,
 } from "@/lib/demo-state";
 import { buildDemoDialogue } from "@/lib/animal-talking-engine";
 
@@ -404,6 +407,14 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   const overridePagination = usePagination(state.recentOverrides);
   const historyPagination = usePagination(state.conversations, CONV_PAGE_SIZE);
 
+  const npcFieldSources = useMemo(() => {
+    const map = new Map<string, NpcFieldSources>();
+    for (const npc of state.npcs) {
+      map.set(npc.profile.id, buildNpcFieldSources(npc.profile.id, state.conversations));
+    }
+    return map;
+  }, [state.npcs, state.conversations]);
+
   return (
     <section className={`${styles.panel} ${styles.contentPanel}`} aria-label="Data">
       <div className={styles.panelHeader}>
@@ -530,12 +541,17 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
           <div className={styles.tableSectionHeader}>
             <div>
               <h3>Character profiles</h3>
-              <p>{state.npcs.length} characters</p>
+              <p>{state.npcs.length} characters · Blue = Classic engine, violet = LLM.</p>
             </div>
           </div>
           <div className={styles.databaseGrid}>
             {state.npcs.map((npc) => (
-              <NpcProfileCard key={npc.profile.id} npc={npc} allNpcs={state.npcs} />
+              <NpcProfileCard
+                key={npc.profile.id}
+                npc={npc}
+                allNpcs={state.npcs}
+                fieldSources={npcFieldSources.get(npc.profile.id)!}
+              />
             ))}
           </div>
         </section>
@@ -684,12 +700,20 @@ function NpcToken({
   );
 }
 
+// Maps an update source to profile-card highlight classes (blue = Classic, violet = LLM).
+function fieldSourceClass(source: UpdateSource | null | undefined): string {
+  if (source === "CLASSIC_ENGINE") return styles.fieldClassic;
+  if (source === "LLM_PACKAGE") return styles.fieldLlm;
+  return "";
+}
+
 // Compact NPC profile card for the data page — header always visible,
-// lore/personality/goals/relationships each in a collapsible section.
+// lore/personality/hobbies/relationships each in a collapsible section.
 function NpcProfileCard({
   npc,
   allNpcs,
-}: Readonly<{ npc: NpcState; allNpcs: NpcState[] }>) {
+  fieldSources,
+}: Readonly<{ npc: NpcState; allNpcs: NpcState[]; fieldSources: NpcFieldSources }>) {
   const relationshipCount = Object.keys(npc.relationships).length;
 
   return (
@@ -702,6 +726,43 @@ function NpcProfileCard({
         </div>
       </header>
       <div className={styles.npcSections}>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>Mood</summary>
+          <div className={styles.npcSectionBody}>
+            <span className={`${styles.fieldValue} ${fieldSourceClass(fieldSources.mood)}`}>
+              {npc.runtime.mood}
+            </span>
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>Current objective</summary>
+          <div className={styles.npcSectionBody}>
+            <span className={`${styles.fieldValue} ${fieldSourceClass(fieldSources.objective)}`}>
+              {formatObjective(npc.runtime.objective)}
+            </span>
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>
+            Memories ({npc.memories.length})
+          </summary>
+          <div className={styles.npcSectionBody}>
+            {npc.memories.length > 0 ? (
+              <ul className={styles.goalList}>
+                {npc.memories.map((memory) => (
+                  <li
+                    key={memory}
+                    className={`${styles.memoryRow} ${fieldSourceClass(fieldSources.memories[memory])}`}
+                  >
+                    {memory}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={styles.placeholder}>No memories yet.</p>
+            )}
+          </div>
+        </details>
         <details className={styles.npcSection}>
           <summary className={styles.npcSectionSummary}>Background</summary>
           <div className={styles.npcSectionBody}>
@@ -724,12 +785,12 @@ function NpcProfileCard({
         </details>
         <details className={styles.npcSection}>
           <summary className={styles.npcSectionSummary}>
-            Goals ({npc.profile.goals.length})
+            Hobbies ({npc.profile.hobbies.length})
           </summary>
           <div className={styles.npcSectionBody}>
             <ul className={styles.goalList}>
-              {npc.profile.goals.map((goal) => (
-                <li key={goal}>{goal}</li>
+              {npc.profile.hobbies.map((hobby) => (
+                <li key={hobby}>{hobby}</li>
               ))}
             </ul>
           </div>
@@ -743,10 +804,16 @@ function NpcProfileCard({
               {Object.entries(npc.relationships).map(([targetId, relation]) => {
                 const target = allNpcs.find((other) => other.profile.id === targetId);
                 const name = target?.profile.name ?? targetId;
+                const relSource = fieldSources.relationships[targetId];
                 return (
-                  <div key={targetId} className={styles.relationshipRow}>
+                  <div
+                    key={targetId}
+                    className={`${styles.relationshipRow} ${fieldSourceClass(relSource)}`}
+                  >
                     <span>{name}</span>
-                    <span className={styles.badge}>{formatRelationship(relation)}</span>
+                    <span className={`${styles.badge} ${fieldSourceClass(relSource)}`}>
+                      {formatRelationship(relation)}
+                    </span>
                   </div>
                 );
               })}

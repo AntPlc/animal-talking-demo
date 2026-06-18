@@ -1,7 +1,7 @@
 # Animal Talking Documentation
 
 This folder consolidates the project docs so the repo has one place to read the
-demo overview, the AI cadrage, and the asset notes.
+demo overview, the AI scope notes, and the asset notes.
 
 ## 1. Project Overview
 
@@ -29,12 +29,12 @@ Open [http://localhost:3000](http://localhost:3000).
 - `/history` - saved conversations
 - `/database` - NPC runtime snapshot
 
-## 4. AI Cadrage
+## 4. AI Scope
 
 ### Goal
 
 Reduce the cost of authoring NPC dialogues by using a local LLM in the browser
-to generate contextualized exchanges from each NPC's personality, goals, and
+to generate contextualized exchanges from each NPC's personality, hobbies, and
 runtime state.
 
 ### Demo target
@@ -80,6 +80,8 @@ Out of scope:
 
 - 100% frontend: state lives in memory or local JSON-like structures.
 - LLM as an application layer: no model training, only prompts and validation.
+- English-only LLM I/O: all prompts, dialogue lines, memories, and validation
+  rules use English. No translation or locale conversion layer.
 - Minimal UI: the grid exists to make the dialogue pipeline visible.
 - AI Town inspiration: separate simulation from async LLM work; keep short-term
   memory small and focused.
@@ -92,7 +94,7 @@ interface NpcProfile {
   name: string;
   role: string;
   personality: string[];
-  goals: string[];
+  hobbies: string[];
   traits: Record<string, string | number>;
 }
 
@@ -115,8 +117,8 @@ interface DialogueLine {
 
 The intended dialogue pipeline is:
 
-1. Build a constrained prompt in French.
-2. Ask for short dialogue lines in `NOM: réplique` format.
+1. Build a constrained prompt in English.
+2. Ask for short dialogue lines in `NAME: line` format.
 3. Validate the output: turn count, voice count, anti-repetition.
 4. Run a correction pass if the first answer is not compliant.
 
@@ -138,7 +140,7 @@ The intended dialogue pipeline is:
 
 ### Recommended implementation order
 
-1. Cadrage and repo structure.
+1. Scope definition and repo structure.
 2. Local LLM proof of concept.
 3. NPC model and seeded data.
 4. 2D scene and movement.

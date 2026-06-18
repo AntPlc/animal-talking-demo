@@ -1,7 +1,8 @@
 // Bridge between the demo simulation and the animal-talking-core package.
 //
-// Flow:
-//  1. Convert NpcState → TalkingCharacter (package input type).
+// All prompts, dialogue lines, and LLM JSON use English only — no translation layer.
+//
+// Flow://  1. Convert NpcState → TalkingCharacter (package input type).
 //  2. Build a mock LlmProvider that returns template-generated dialogue in the
 //     exact JSON shape the package validator expects.
 //  3. Run AnimalTalkingEngine.runInteraction() so the real PromptBuilder fires,
@@ -82,10 +83,10 @@ function npcToTalkingCharacter(npc: NpcState, otherId: string): TalkingCharacter
     name: npc.profile.name,
     role: npc.profile.role,
     personalityTraits: npc.profile.personality,
-    goals: npc.profile.goals,
+    goals: npc.profile.hobbies,
     speakingStyle: npc.profile.personality.slice(0, 2).join(" and "),
     talkingState: {
-      idea: conflictIdea ?? npc.profile.goals[0] ?? "explore",
+      idea: conflictIdea ?? npc.profile.hobbies[0] ?? "explore",
       objective: null,
       history: historyParts.join(" "),
       mood: demoMoodToPackageMood(npc.runtime.mood),

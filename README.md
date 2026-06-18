@@ -34,3 +34,5 @@ Open [http://localhost:3000](http://localhost:3000).
 - The docs mention `volet-168h/`, but this checkout already is the demo root.
 - The WebLLM/WebGPU integration is intentionally left for the next iteration; the
   current demo focuses on the simulation and structured dialogue pipeline.
+- All NPC content, prompts, and LLM-facing text are English-only. There is no
+  translation layer in the app.

@@ -151,6 +151,15 @@ export interface ConversationRecord {
   endedAtMs?: number;
 }
 
+export type UpdateSource = "CLASSIC_ENGINE" | "LLM_PACKAGE";
+
+export interface NpcFieldSources {
+  mood: UpdateSource | null;
+  objective: UpdateSource | null;
+  memories: Record<string, UpdateSource>;
+  relationships: Record<string, UpdateSource>;
+}
+
 export interface DemoState {
   tick: number;
   worldTime: WorldTime;
@@ -1118,8 +1127,8 @@ export function hydrateNpcProfile(savedNpc: NpcState): NpcState {
       ...savedNpc.runtime,
       blockedTicks: savedNpc.runtime.blockedTicks ?? 0,
       shortHistory: savedNpc.runtime.shortHistory.map((entry) =>
-        entry.startsWith("Current goal: ")
-          ? `Current goal: ${profile.goals[0]}.`
+        entry.startsWith("Current goal: ") || entry.startsWith("Current hobby: ")
+          ? `Current hobby: ${profile.hobbies[0]}.`
           : entry.startsWith("Started the day in ")
             ? `Started the day in ${profile.preferredZoneId}.`
             : entry,
@@ -1394,7 +1403,7 @@ function hashString(value: string): number {
   return hash;
 }
 
-// Translates a raw personality trait adjective (e.g. "observant") into a first-person
+// Maps a raw personality trait adjective (e.g. "observant") into a first-person
 // conversational phrase (e.g. "noticing the details") for use inside dialogue lines.
 function personalityCue(profile: NpcProfile): string {
   const cue = profile.personality[hashString(profile.id) % profile.personality.length];
@@ -1472,7 +1481,7 @@ function openingLine(
   weather: string,
   timeLabel: string,
 ): string {
-  const idea = first.profile.goals[0];
+  const idea = first.profile.hobbies[0];
   const seed = `${first.profile.id}:${second.profile.id}:${location}:${weather}:${timeLabel}`;
   const templates = openingTemplatesFor(first, second, location, weather, timeLabel, idea);
   return pickTemplate(seed, templates);
@@ -1634,7 +1643,7 @@ function followUpTemplatesFor(
   zoneText: string,
   hourHint: string,
 ): string[] {
-  const idea = speaker.profile.goals[0];
+  const idea = speaker.profile.hobbies[0];
 
   switch (speaker.profile.id) {
     case "npc_antoine":
@@ -1821,5 +1830,48 @@ function registerOverrideEvents(
   }));
 
   return [...nextEvents, ...existing].slice(0, 40);
+}
+
+// Derives the latest update source per NPC field from completed conversations.
+// Used by the data-page profile cards to colour runtime fields blue (Classic) or violet (LLM).
+export function buildNpcFieldSources(
+  npcId: string,
+  conversations: ConversationRecord[],
+): NpcFieldSources {
+  const result: NpcFieldSources = {
+    mood: null,
+    objective: null,
+    memories: {},
+    relationships: {},
+  };
+
+  for (const conversation of conversations) {
+    if (conversation.status !== "completed") {
+      continue;
+    }
+
+    for (const update of conversation.updates) {
+      if (update.characterId !== npcId) {
+        continue;
+      }
+
+      switch (update.type) {
+        case "UPDATE_MOOD":
+          result.mood = update.source;
+          break;
+        case "UPDATE_OBJECTIVE":
+          result.objective = update.source;
+          break;
+        case "ADD_MEMORY":
+          result.memories[update.memory] = update.source;
+          break;
+        case "UPDATE_RELATIONSHIP":
+          result.relationships[update.targetCharacterId] = update.source;
+          break;
+      }
+    }
+  }
+
+  return result;
 }
 
