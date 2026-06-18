@@ -895,7 +895,7 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
 
 
 // Expanded conversation card used in the history view.
-// Shows the full dialogue transcript and grouped update sections by source.
+// Shows the full dialogue transcript; updates are listed in Override actions.
 function ConversationCard({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   return (
     <article className={styles.conversationCard}>
@@ -926,15 +926,6 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
             </div>
           ))}
         </div>
-      )}
-
-      {conversation.updates.length > 0 && (
-        <details className={styles.convDetails}>
-          <summary className={styles.convDetailsSummary}>
-            {conversation.updates.length} update{conversation.updates.length > 1 ? "s" : ""}
-          </summary>
-          <ConversationUpdatesSection updates={conversation.updates} />
-        </details>
       )}
     </article>
   );
