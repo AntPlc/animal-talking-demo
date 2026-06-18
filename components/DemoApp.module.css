@@ -637,8 +637,8 @@
 
 .databaseGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.4rem;
   align-content: start;
 }
 
@@ -646,6 +646,113 @@
   padding: 0.65rem;
   display: grid;
   gap: 0.35rem;
+}
+
+.npcProfileCard {
+  padding: 0.5rem;
+  gap: 0.25rem;
+}
+
+.npcSections {
+  display: grid;
+}
+
+.npcSection {
+  border-top: 1px solid #e2e8f0;
+}
+
+.npcSectionSummary {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0;
+}
+
+.npcSectionSummary::-webkit-details-marker {
+  display: none;
+}
+
+.npcSectionSummary::before {
+  content: "▶";
+  font-size: 0.55rem;
+  transition: transform 0.15s ease;
+}
+
+details[open] > .npcSectionSummary::before {
+  transform: rotate(90deg);
+}
+
+.npcSection[open] > .npcSectionSummary {
+  margin-bottom: 0.25rem;
+}
+
+.npcSectionBody {
+  padding: 0.45rem 0.5rem;
+  margin-bottom: 0.35rem;
+  border-radius: 0.6rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.tagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tagChip {
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.goalList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.goalList li {
+  position: relative;
+  padding-left: 0.85rem;
+  color: #334155;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.goalList li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: #94a3b8;
+}
+
+.relationshipList {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.relationshipRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: #334155;
 }
 
 .smallCardHeader {

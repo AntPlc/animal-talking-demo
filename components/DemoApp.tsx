@@ -526,26 +526,19 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
           </div>
         </section>
 
-        <div className={`${styles.dataBlock} ${styles.databaseGrid}`}>
-          {state.npcs.map((npc) => (
-            <article key={npc.profile.id} className={styles.smallCard}>
-              <div className={styles.smallCardHeader}>
-                <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
-                <div className={styles.smallCardHeaderText}>
-                  <strong>{npc.profile.name}</strong>
-                  <span>{npc.profile.role}</span>
-                </div>
-              </div>
-              <p className={styles.loreText}>{npc.profile.lore}</p>
-              <p>{npc.profile.personality.join(", ")}</p>
-              <p>{npc.profile.goals.join(", ")}</p>
-              <p>
-                Relationships:{" "}
-                {formatNpcRelationships(npc, state.npcs)}
-              </p>
-            </article>
-          ))}
-        </div>
+        <section className={styles.dataBlock} aria-label="Character profiles">
+          <div className={styles.tableSectionHeader}>
+            <div>
+              <h3>Character profiles</h3>
+              <p>{state.npcs.length} characters</p>
+            </div>
+          </div>
+          <div className={styles.databaseGrid}>
+            {state.npcs.map((npc) => (
+              <NpcProfileCard key={npc.profile.id} npc={npc} allNpcs={state.npcs} />
+            ))}
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -688,6 +681,80 @@ function NpcToken({
         <small>{npc.profile.name}</small>
       </div>
     </div>
+  );
+}
+
+// Compact NPC profile card for the data page — header always visible,
+// lore/personality/goals/relationships each in a collapsible section.
+function NpcProfileCard({
+  npc,
+  allNpcs,
+}: Readonly<{ npc: NpcState; allNpcs: NpcState[] }>) {
+  const relationshipCount = Object.keys(npc.relationships).length;
+
+  return (
+    <article className={`${styles.smallCard} ${styles.npcProfileCard}`}>
+      <header className={styles.smallCardHeader}>
+        <NpcPortrait profile={npc.profile} className={styles.smallCardPortrait} />
+        <div className={styles.smallCardHeaderText}>
+          <strong>{npc.profile.name}</strong>
+          <span>{npc.profile.role}</span>
+        </div>
+      </header>
+      <div className={styles.npcSections}>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>Background</summary>
+          <div className={styles.npcSectionBody}>
+            <p className={styles.loreText}>{npc.profile.lore}</p>
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>
+            Personality ({npc.profile.personality.length})
+          </summary>
+          <div className={styles.npcSectionBody}>
+            <ul className={styles.tagList}>
+              {npc.profile.personality.map((trait) => (
+                <li key={trait} className={styles.tagChip}>
+                  {trait}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>
+            Goals ({npc.profile.goals.length})
+          </summary>
+          <div className={styles.npcSectionBody}>
+            <ul className={styles.goalList}>
+              {npc.profile.goals.map((goal) => (
+                <li key={goal}>{goal}</li>
+              ))}
+            </ul>
+          </div>
+        </details>
+        <details className={styles.npcSection}>
+          <summary className={styles.npcSectionSummary}>
+            Relationships ({relationshipCount})
+          </summary>
+          <div className={styles.npcSectionBody}>
+            <div className={styles.relationshipList}>
+              {Object.entries(npc.relationships).map(([targetId, relation]) => {
+                const target = allNpcs.find((other) => other.profile.id === targetId);
+                const name = target?.profile.name ?? targetId;
+                return (
+                  <div key={targetId} className={styles.relationshipRow}>
+                    <span>{name}</span>
+                    <span className={styles.badge}>{formatRelationship(relation)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </details>
+      </div>
+    </article>
   );
 }
 
@@ -858,17 +925,6 @@ function isSavedDemoState(
     typeof value.state === "object" &&
     value.state !== null
   );
-}
-
-// Formats a millisecond duration as a zero-padded "MM:SS" string for the elapsed timer.
-function formatNpcRelationships(npc: NpcState, allNpcs: NpcState[]): string {
-  return Object.entries(npc.relationships)
-    .map(([targetId, relation]) => {
-      const target = allNpcs.find((other) => other.profile.id === targetId);
-      const name = target?.profile.name ?? targetId;
-      return `${name} → ${formatRelationship(relation)}`;
-    })
-    .join(", ");
 }
 
 function formatElapsed(valueMs: number): string {
