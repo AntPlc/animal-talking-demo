@@ -18,7 +18,6 @@ import {
 import {
   advanceDemoState,
   buildNpcFieldSources,
-  collectRelationshipChanges,
   createInitialDemoState,
   findInteractionCandidate,
   finishInteraction,
@@ -46,7 +45,6 @@ import {
   type NpcState,
   type NpcFieldSources,
   type OverrideEvent,
-  type RelationshipChangeEntry,
   type UpdateSource,
 } from "@/lib/demo-state";
 import { buildDemoDialogue } from "@/lib/animal-talking-engine";
@@ -410,11 +408,6 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   const convPagination = usePagination(state.conversations);
   const overridePagination = usePagination(state.recentOverrides);
   const historyPagination = usePagination(state.conversations, CONV_PAGE_SIZE);
-  const relationshipChanges = useMemo(
-    () => collectRelationshipChanges(state.conversations, state.npcs),
-    [state.conversations, state.npcs],
-  );
-  const relationshipPagination = usePagination(relationshipChanges);
 
   const npcFieldSources = useMemo(() => {
     const map = new Map<string, NpcFieldSources>();
@@ -544,25 +537,6 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
               <OverrideEventRow key={event.id} event={event} />
             ))}
           </div>
-        </section>
-
-        <section className={`${styles.dataBlock} ${styles.overridePanel}`} aria-label="Relationship changes">
-          <div className={styles.tableSectionHeader}>
-            <div>
-              <h3>Relationship changes</h3>
-              <p>Transitions extracted from conversation history.</p>
-            </div>
-            <PaginationBar {...relationshipPagination} />
-          </div>
-          {relationshipChanges.length > 0 ? (
-            <div className={styles.overrideList}>
-              {relationshipPagination.slice.map((entry) => (
-                <RelationshipChangeRow key={entry.id} entry={entry} />
-              ))}
-            </div>
-          ) : (
-            <p className={styles.placeholder}>No relationship changes yet.</p>
-          )}
         </section>
 
         <section className={styles.dataBlock} aria-label="Character profiles">
@@ -880,7 +854,6 @@ function NpcProfileCard({
 // Compact conversation card shown in the simulation sidebar feed.
 // Displays participants, timestamp, status badge, and a collapsible summary + dialogue.
 function ConversationCardCompact({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
-  const llmCount = conversation.updates.filter((u) => u.source === "LLM_PACKAGE").length;
   const timestamp = conversation.startedAtMs
     ? formatTimestamp(new Date(conversation.startedAtMs))
     : (conversation.startedAt ?? "—");
@@ -913,17 +886,6 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
           )}
         </details>
       )}
-      {llmCount > 0 && (
-        <p className={styles.llmTag}>{llmCount} LLM update{llmCount > 1 ? "s" : ""} applied</p>
-      )}
-      {conversation.updates.length > 0 && (
-        <details className={styles.convDetails}>
-          <summary className={styles.convDetailsSummary}>
-            {conversation.updates.length} update{conversation.updates.length > 1 ? "s" : ""}
-          </summary>
-          <ConversationUpdatesSection updates={conversation.updates} />
-        </details>
-      )}
       {conversation.status === "failed" && (
         <p className={styles.failedNote}>Interrupted by page reload — generation was lost.</p>
       )}
@@ -933,8 +895,7 @@ function ConversationCardCompact({ conversation }: Readonly<{ conversation: Conv
 
 
 // Expanded conversation card used in the history view.
-// Shows the full dialogue transcript followed by two grouped update sections:
-// one for LLM-sourced extractions and one for classic-engine updates.
+// Shows the full dialogue transcript and grouped update sections by source.
 function ConversationCard({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   return (
     <article className={styles.conversationCard}>
@@ -968,7 +929,12 @@ function ConversationCard({ conversation }: Readonly<{ conversation: Conversatio
       )}
 
       {conversation.updates.length > 0 && (
-        <ConversationUpdatesSection updates={conversation.updates} />
+        <details className={styles.convDetails}>
+          <summary className={styles.convDetailsSummary}>
+            {conversation.updates.length} update{conversation.updates.length > 1 ? "s" : ""}
+          </summary>
+          <ConversationUpdatesSection updates={conversation.updates} />
+        </details>
       )}
     </article>
   );
@@ -1093,25 +1059,6 @@ function OverrideEventRow({ event }: Readonly<{ event: OverrideEvent }>) {
       <div className={styles.overrideItemMeta}>
         <span>{event.source === "CLASSIC_ENGINE" ? "Classic" : "Package LLM"}</span>
         <span className={styles.updateRowTimestamp}>{event.timestamp}</span>
-      </div>
-    </article>
-  );
-}
-
-function RelationshipChangeRow({ entry }: Readonly<{ entry: RelationshipChangeEntry }>) {
-  return (
-    <article
-      className={`${styles.overrideItem} ${entry.source === "CLASSIC_ENGINE" ? styles.overrideClassic : styles.overrideLlm}`}
-    >
-      <div>
-        <strong>
-          {entry.characterName} → {entry.targetName}
-        </strong>
-        <p>{formatRelationship(entry.relationship)}</p>
-      </div>
-      <div className={styles.overrideItemMeta}>
-        <span>{entry.participants.join(" + ")}</span>
-        <span className={styles.updateRowTimestamp}>{entry.timestamp}</span>
       </div>
     </article>
   );
