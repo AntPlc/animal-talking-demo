@@ -6,6 +6,16 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./DemoApp.module.css";
 import {
+  CONV_PAGE_SIZE,
+  GENERATION_DELAY_MS,
+  PAGE_SIZE,
+  SESSION_KEY,
+  SESSION_START_KEY,
+  STORAGE_KEY,
+  STORAGE_VERSION,
+  TICK_INTERVAL_MS,
+} from "@/lib/constants";
+import {
   advanceDemoState,
   createInitialDemoState,
   findInteractionCandidate,
@@ -34,14 +44,6 @@ import {
 } from "@/lib/demo-state";
 import { buildDemoDialogue } from "@/lib/animal-talking-engine";
 
-const STORAGE_KEY = "animal-talking-demo-state-v5";
-const STORAGE_VERSION = 5;
-// Presence of this key in sessionStorage signals a normal reload (not hard refresh).
-// sessionStorage is cleared on Shift+F5 / Ctrl+Shift+R, preserved on F5.
-const SESSION_KEY = "animal-talking-session-v4";
-const SESSION_START_KEY = "animal-talking-session-start-v5";
-const TICK_INTERVAL_MS = 1800;
-const GENERATION_DELAY_MS = Number(process.env.NEXT_PUBLIC_GENERATION_DELAY_MS) || 20_000;
 
 type ViewLabel = {
   title: string;
@@ -360,9 +362,15 @@ function SimulationView({
 
           <div className={`${styles.panelScroll} ${styles.historyList}`}>
             {conversations.length > 0 ? (
-              [...conversations].reverse().map((conversation) => (
-                <ConversationCardCompact key={conversation.id} conversation={conversation} />
-              ))
+              [...conversations]
+                .sort((a, b) => {
+                  if (a.status === "generating" && b.status !== "generating") return -1;
+                  if (b.status === "generating" && a.status !== "generating") return 1;
+                  return (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0);
+                })
+                .map((conversation) => (
+                  <ConversationCardCompact key={conversation.id} conversation={conversation} />
+                ))
             ) : (
               <p className={styles.placeholder}>
                 No conversations yet. NPCs will trigger one automatically when they meet on the
@@ -546,8 +554,6 @@ function DataView({ state }: Readonly<{ state: DemoState }>) {
   );
 }
 
-const PAGE_SIZE = 10;
-const CONV_PAGE_SIZE = 10;
 
 // Hook that slices an array into pages and exposes safe page navigation.
 // safePage clamps the current page index to prevent out-of-bound reads when the array shrinks.
@@ -689,19 +695,41 @@ function NpcToken({
 }
 
 // Compact conversation card shown in the simulation sidebar feed.
-// Displays participants, zone, status badge, summary, and LLM update count.
+// Displays participants, timestamp, status badge, and a collapsible summary + dialogue.
 function ConversationCardCompact({ conversation }: Readonly<{ conversation: ConversationRecord }>) {
   const llmCount = conversation.updates.filter((u) => u.source === "LLM_PACKAGE").length;
+  const timestamp = conversation.startedAtMs
+    ? formatTimestamp(new Date(conversation.startedAtMs))
+    : (conversation.startedAt ?? "—");
+  const hasContent = !!conversation.summary || conversation.turns.length > 0;
+
   return (
     <article className={styles.conversationCard}>
       <header className={styles.conversationHeader}>
         <div>
           <strong>{conversation.participantNames.join(" + ")}</strong>
-          <p>{conversation.zoneId ?? "unknown zone"} · {conversation.reason.toLowerCase().replace("_", " ")}</p>
+          <p className={styles.updateRowTimestamp}>{timestamp}</p>
         </div>
         <span className={statusBadgeClass(conversation.status)}>{conversation.status}</span>
       </header>
-      <p className={styles.conversationSummary}>{conversation.summary}</p>
+      {hasContent && (
+        <details className={styles.convDetails}>
+          <summary className={styles.convDetailsSummary}>Summary</summary>
+          {conversation.summary && (
+            <p className={styles.conversationSummary}>{conversation.summary}</p>
+          )}
+          {conversation.turns.length > 0 && (
+            <div className={styles.turnList}>
+              {conversation.turns.map((turn) => (
+                <div key={`${conversation.id}-${turn.index}`} className={styles.turnItem}>
+                  <strong>{turn.speakerName}</strong>
+                  <span>{turn.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </details>
+      )}
       {llmCount > 0 && (
         <p className={styles.llmTag}>{llmCount} LLM update{llmCount > 1 ? "s" : ""} applied</p>
       )}

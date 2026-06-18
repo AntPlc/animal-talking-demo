@@ -1,5 +1,13 @@
 // Shared demo state, simulation rules, and the fake Animal Talking provider.
 
+import {
+  BLOCKED_ROW_TOP,
+  GRID_HEIGHT,
+  GRID_WIDTH,
+  INTERACTION_COOLDOWN_TICKS,
+  WANDER_INTERVAL,
+  WEATHER_CHANGE_INTERVAL_TICKS,
+} from "./constants";
 import { NPC_PROFILES, type NpcProfile } from "./npc-data";
 import { findPathToGoal, nextPathStep } from "./pathfinder";
 
@@ -158,17 +166,7 @@ export interface InteractionCandidate {
 }
 
 
-const GRID_WIDTH = 12;
-const GRID_HEIGHT = 8;
-// Top row is reserved — NPCs cannot walk there so speech bubbles are never clipped.
-const BLOCKED_ROW_TOP = 0;
-// Minimum ticks between two NPCs interacting (or being directed toward each other).
-// At TICK_INTERVAL_MS=1800 this equals ~7.2 s — short enough to allow chaining,
-// long enough to prevent instant re-trigger.
-const INTERACTION_COOLDOWN_TICKS = 4;
-
 const WEATHER_SEQUENCE: Weather[] = ["SUNNY", "CLOUDY", "RAINY", "STORMY"];
-const WEATHER_CHANGE_INTERVAL_TICKS = 30;
 
 const BASE_ZONES: WorldZone[] = [
   {
@@ -1241,11 +1239,6 @@ function chooseUnblockMove(
 
   return null;
 }
-
-// Every WANDER_INTERVAL ticks an idle-in-zone NPC picks a random free adjacent
-// cell still inside the zone, so the map looks alive even when nobody is
-// approaching each other.
-const WANDER_INTERVAL = 4;
 
 function pickWanderCell(
   npc: NpcState,

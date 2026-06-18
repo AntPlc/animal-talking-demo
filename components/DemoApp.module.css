@@ -687,6 +687,40 @@
   line-height: 1.45;
 }
 
+.convDetails {
+  margin-top: 0.1rem;
+}
+
+.convDetailsSummary {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.convDetailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.convDetailsSummary::before {
+  content: "▶";
+  font-size: 0.55rem;
+  transition: transform 0.15s ease;
+}
+
+details[open] > .convDetailsSummary::before {
+  transform: rotate(90deg);
+}
+
+.convDetails[open] > .convDetailsSummary {
+  margin-bottom: 0.45rem;
+}
+
 .turnList {
   display: grid;
   gap: 0.4rem;
